@@ -143,6 +143,35 @@ $("cfg-save").addEventListener("click", saveSettings);
 $("btn-retry").addEventListener("click", () => invoke("retry_failed"));
 $("btn-clear").addEventListener("click", () => invoke("clear_finished"));
 
+// ---------- hot update ----------
+async function checkUpdate() {
+  $("update-msg").textContent = "检查中…";
+  try {
+    const r = await invoke("check_update");
+    if (r.available) {
+      $("update-msg").textContent = `发现新版本 ${r.version},下载中…`;
+      await invoke("install_update"); // downloads, installs, restarts
+    } else {
+      $("update-msg").textContent = "已是最新版本";
+    }
+  } catch (e) {
+    $("update-msg").textContent = "检查失败: " + e;
+  }
+}
+$("btn-update").addEventListener("click", checkUpdate);
+
+listen("update-progress", e => {
+  const { downloaded, total } = e.payload;
+  if (total) {
+    $("update-msg").textContent = `下载中 ${(downloaded / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`;
+  } else {
+    $("update-msg").textContent = `下载中 ${(downloaded / 1048576).toFixed(1)} MB`;
+  }
+});
+
+const { getVersion } = window.__TAURI__.app;
+getVersion().then(v => { $("app-version").textContent = "v" + v; }).catch(() => {});
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }

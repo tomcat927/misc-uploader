@@ -2,7 +2,7 @@
 name = "misc-uploader"
 version = "0.1.0"
 edition = "2021"
-description = "misc repo uploader — drag & drop into tianyi-misc-repo"
+description = "misc repo uploader — drag & drop into your WebDAV repo"
 
 [lib]
 name = "misc_uploader_lib"
@@ -13,6 +13,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }

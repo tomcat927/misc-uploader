@@ -26,6 +26,7 @@ header {
 .status.disconnected { color: var(--err); }
 .status.connected { color: var(--ok); }
 #conn-user { color: var(--dim); flex: 1; }
+.ver { color: var(--dim); font-size: 11px; }
 button {
   background: #263041; color: var(--text); border: 1px solid var(--border);
   border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px;

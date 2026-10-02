@@ -1,4 +1,6 @@
-// lib.rs — Tauri app: commands, drag&drop intake, upload workers.
+// lib.rs — Tauri app: commands, drag&drop intake, upload workers,
+// hot-update (tauri-plugin-updater), remote log sync.
+mod log;
 mod openlist;
 mod queue;
 
@@ -8,7 +10,6 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::io::AsyncReadExt;
 use tauri::{DragDropEvent, Emitter, Manager, State, WindowEvent};
 
 pub struct AppState {
@@ -130,6 +131,20 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
             }
         });
     }
+    // remote log sync: push local log files every 5 minutes
+    {
+        let client = client.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                match log::sync_remote(&client).await {
+                    Ok(()) => {}
+                    Err(e) => log::log(&format!("log sync: {e}")),
+                }
+            }
+        });
+    }
+    log::log(&format!("session started (user {})", state.config.lock().unwrap().username));
     emit_queue(app);
 }
 
@@ -176,6 +191,48 @@ fn clear_finished(state: State<AppState>) {
     }
 }
 
+// ---- hot update ----
+
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
+    log::log(&format!("update check: {}", update.is_some()));
+    Ok(match update {
+        Some(u) => serde_json::json!({
+            "available": true,
+            "version": u.version,
+            "notes": u.body.clone().unwrap_or_default(),
+        }),
+        None => serde_json::json!({"available": false}),
+    })
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("no update available")?;
+    log::log(&format!("downloading update {}", update.version));
+    let emit_app = app.clone();
+    let mut on_chunk = move |chunk: usize, total: Option<u64>| {
+        let _ = emit_app.emit("update-progress", serde_json::json!({
+            "downloaded": chunk, "total": total,
+        }));
+    };
+    update
+        .download_and_install(&mut on_chunk, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    log::log("update installed, restarting app");
+    app.restart();
+}
+
 // ---- drag & drop intake ----
 
 fn collect_files(dir: &std::path::Path, out: &mut Vec<(String, String, u64, u64)>) {
@@ -204,6 +261,10 @@ fn modified_ms(meta: &std::fs::Metadata) -> u64 {
 fn handle_drop(app: tauri::AppHandle, paths: Vec<std::path::PathBuf>) {
     tauri::async_runtime::spawn(async move {
         let state: State<AppState> = app.state();
+        let connected = state.client.lock().unwrap().is_some();
+        if !connected {
+            return;
+        }
         let mut files = Vec::new();
         for p in paths {
             if p.is_dir() {
@@ -215,6 +276,7 @@ fn handle_drop(app: tauri::AppHandle, paths: Vec<std::path::PathBuf>) {
         }
         if let Some(q) = state.queue.lock().unwrap().as_ref() {
             if !files.is_empty() {
+                log::log(&format!("drop: queued {} item(s)", files.len()));
                 q.add(files);
             }
         }
@@ -253,6 +315,7 @@ async fn process_item(
             g.state = "skipped".into();
             g.rel = Some(seen.rel.clone());
             g.error = Some(format!("already in repo: {}", seen.rel));
+            log::log(&format!("skip {}: {}", g.name, seen.rel));
             drop(g);
             emit_queue(app);
             return;
@@ -277,6 +340,7 @@ async fn process_item(
         let g = item.lock().unwrap();
         (g.rel.clone().unwrap(), g.file_path.clone())
     };
+    log::log(&format!("upload start: {rel}"));
     let dir = std::path::Path::new(&rel)
         .parent()
         .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -293,10 +357,12 @@ async fn process_item(
             let mut g = item.lock().unwrap();
             g.state = "done".into();
             let sha = g.sha.clone().unwrap_or_default();
-            q.history_put(sha, queue::HistoryEntry { rel, time: queue::now_ms() });
+            q.history_put(sha, queue::HistoryEntry { rel: rel.clone(), time: queue::now_ms() });
             drop(g);
+            log::log(&format!("upload done: {rel}"));
         }
         Err(e) => {
+            log::log(&format!("upload error {rel}: {e}"));
             retry_or_fail(app, &item, e);
         }
     }
@@ -367,12 +433,15 @@ async fn hash_file(p: &str) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let dir = app
                 .path()
                 .app_config_dir()
                 .unwrap_or_else(|_| PathBuf::from("."));
             let _ = std::fs::create_dir_all(&dir);
+            log::init(dir.join("logs"));
             let cfg_path = dir.join("config.json");
             let cfg: Config = std::fs::read(&cfg_path)
                 .ok()
@@ -400,7 +469,9 @@ pub fn run() {
             set_target,
             get_queue,
             retry_failed,
-            clear_finished
+            clear_finished,
+            check_update,
+            install_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

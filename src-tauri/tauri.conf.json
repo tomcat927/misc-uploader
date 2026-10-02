@@ -24,6 +24,16 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.ico", "icons/32x32.png", "icons/128x128.png"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJFRjc0Qjk5QUE2QTAwNEEKUldSS0FHcXFtVXYzdnRFVFp6WGdKOUluNzhIZmdIMmQ0VThZODJvUFBSVUJ5QXJOZkRZUUFOLzQK",
+      "endpoints": [
+        "https://gh-proxy.org/https://github.com/tomcat927/misc-uploader/releases/latest/download/latest.json",
+        "https://github.com/tomcat927/misc-uploader/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

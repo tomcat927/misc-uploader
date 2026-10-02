@@ -25,6 +25,16 @@ jobs:
       - name: Install deps
         run: npm ci --no-audit --no-fund
 
+      - name: Set version from China time
+        shell: pwsh
+        run: |
+          $chinaTime = (Get-Date).ToUniversalTime().AddHours(8)
+          $newVersion = "{0}.{1}.{2}" -f $chinaTime.Year, ($chinaTime.Month * 100 + $chinaTime.Day), ($chinaTime.Hour * 100 + $chinaTime.Minute)
+          Write-Host "China time: $chinaTime -> version $newVersion"
+          (Get-Content src-tauri/Cargo.toml) -replace '^version = ".*"', "version = `"$newVersion`"" | Set-Content src-tauri/Cargo.toml
+          (Get-Content src-tauri/tauri.conf.json) -replace '"version": ".*"', "`"version`": `"$newVersion`"" | Set-Content src-tauri/tauri.conf.json
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_VERSION=$newVersion"
+
       - name: Generate app icon (System.Drawing -> tauri icon)
         shell: pwsh
         run: |
@@ -46,15 +56,68 @@ jobs:
         shell: pwsh
         run: ./test/smoke.ps1
 
-      - name: Build (nsis)
+      - name: Build (nsis, signed for updater)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: misc-uploader-setup
-          path: src-tauri/target/release/bundle/nsis/*.exe
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
           if-no-files-found: error
+
+      - name: Upload to fixed `latest` release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          $version = $env:APP_VERSION
+          $bundleDir = "src-tauri/target/release/bundle"
+          $artifacts = @()
+          Get-ChildItem "$bundleDir/nsis/*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*$version*" -and ($_.Name -like '*.exe' -or $_.Name -like '*.exe.sig') } |
+            ForEach-Object { $artifacts += $_.FullName }
+          Write-Host "release artifacts:"
+          $artifacts | ForEach-Object { Write-Host "  $_" }
+          $exists = $true
+          try { $null = gh release view latest --repo $repo 2>$null } catch { $exists = $false }
+          if (-not $exists) {
+            gh release create latest --title "最新构建(自动更新通道)" --notes "每次 push 自动构建。安装器支持应用内热更新。" --repo $repo --latest
+          }
+          foreach ($a in $artifacts) { gh release upload latest $a --repo $repo --clobber }
+
+      - name: Patch latest.json (updater manifest)
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = $env:APP_VERSION
+          $repo = $env:GITHUB_REPOSITORY
+          $exeName = "misc-uploader_${version}_x64-setup.exe"
+          $sigName = "${exeName}.sig"
+          gh release download latest --pattern $sigName --repo $repo --clobber
+          if (-not (Test-Path $sigName)) { throw "signature file $sigName not found in release" }
+          $signature = (Get-Content $sigName -Raw).Trim()
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+          $baseUrl = "https://github.com/$repo/releases/download/latest"
+          $json = @{
+            version = $version
+            notes = "自动构建版本 $version(北京时间)"
+            pub_date = $pubDate
+            platforms = @{
+              "windows-x86_64" = @{ signature = $signature; url = "https://gh-proxy.org/$baseUrl/$exeName" }
+              "windows-x86_64-nsis" = @{ signature = $signature; url = "$baseUrl/$exeName" }
+            }
+          } | ConvertTo-Json -Depth 5 -Compress
+          Set-Content -Path latest.json -Value $json -NoNewline
+          gh release upload latest latest.json --repo $repo --clobber
+          Write-Host "latest.json updated (version $version)"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -69,4 +132,4 @@ jobs:
           path: dist
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.exe
+          files: dist/*
