@@ -1,15 +1,22 @@
 // log.rs — app logging: local append file (logs/applog-YYYYMMDD.log, China time) +
-// periodic sync of all log files to the repo's logs/ dir via WebDAV (remote diagnostics).
+// periodic sync to remote logs/ via WebDAV using a DEDICATED logger account
+// (credentials injected at compile time in CI; NOT encrypted, NOT in the misc hot layer).
 use crate::openlist::OpenListClient;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 static LOG: OnceLock<AppLog> = OnceLock::new();
+static SYNC_DISABLED_LOGGED: AtomicBool = AtomicBool::new(false);
 
 pub struct AppLog {
     dir: PathBuf,
 }
+
+const APP_NAME: &str = "misc-uploader";
+// remote path (relative to logger account base_path): {appName}/logs/
+const REMOTE_DIR: &str = "misc-uploader/logs";
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -68,12 +75,23 @@ pub fn log(msg: &str) {
     println!("{line}");
 }
 
-pub fn logf(args: std::fmt::Arguments) {
-    log(&format!("{args}"));
+// logger account client, credentials injected at compile time by CI (repo secrets).
+// built without them (local dev) -> remote sync disabled.
+fn logger_client() -> Option<OpenListClient> {
+    let base = option_env!("LOG_BASE_URL")?;
+    let user = option_env!("LOG_USER")?;
+    let pass = option_env!("LOG_PASS")?;
+    Some(OpenListClient::new(base, user, pass))
 }
 
-// sync all local log files (small) to remote logs/ — full overwrite per file name
-pub async fn sync_remote(client: &OpenListClient) -> Result<(), String> {
+// sync all local log files to remote {APP_NAME}/logs/ — full overwrite per file name
+pub async fn sync_remote() -> Result<(), String> {
+    let Some(client) = logger_client() else {
+        if !SYNC_DISABLED_LOGGED.swap(true, Ordering::Relaxed) {
+            log("remote log sync disabled (built without LOG_* env)");
+        }
+        return Ok(());
+    };
     let Some(l) = LOG.get() else {
         return Err("log not initialized".into());
     };
@@ -89,11 +107,17 @@ pub async fn sync_remote(client: &OpenListClient) -> Result<(), String> {
     if files.is_empty() {
         return Ok(());
     }
-    client.mkdirp("logs").await?;
+    client.login().await?;
+    client
+        .mkdirp(&format!("{APP_NAME}/logs"))
+        .await
+        .map_err(|e| format!("mkdir: {e}"))?;
     for (path, name) in files {
+        let remote = format!("{REMOTE_DIR}/{name}");
         client
-            .put_file(&format!("logs/{name}"), path.to_string_lossy().as_ref())
-            .await?;
+            .put_file(&remote, path.to_string_lossy().as_ref())
+            .await
+            .map_err(|e| format!("put {name}: {e}"))?;
     }
     Ok(())
 }

@@ -132,15 +132,13 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
             }
         });
     }
-    // remote log sync: push local log files every 5 minutes
+    // remote log sync: push local log files every 5 minutes (dedicated logger account)
     {
-        let client = client.clone();
         tauri::async_runtime::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                match log::sync_remote(&client).await {
-                    Ok(()) => {}
-                    Err(e) => log::log(&format!("log sync: {e}")),
+                if let Err(e) = log::sync_remote().await {
+                    log::log(&format!("log sync: {e}"));
                 }
             }
         });

@@ -60,6 +60,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          LOG_BASE_URL: ${{ secrets.MISC_URL }}
+          LOG_USER: ${{ secrets.LOG_USER }}
+          LOG_PASS: ${{ secrets.LOG_PASS }}
         run: npx tauri build
 
       - name: Upload installer artifact
@@ -76,6 +79,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $ErrorActionPreference = 'Continue'
           $repo = $env:GITHUB_REPOSITORY
           $version = $env:APP_VERSION
           $bundleDir = "src-tauri/target/release/bundle"
@@ -85,9 +89,10 @@ jobs:
             ForEach-Object { $artifacts += $_.FullName }
           Write-Host "release artifacts:"
           $artifacts | ForEach-Object { Write-Host "  $_" }
-          $exists = $true
-          try { $null = gh release view latest --repo $repo 2>$null } catch { $exists = $false }
+          $view = (gh api "repos/$repo/releases/tags/latest" 2>$null) | Out-String
+          $exists = $view -match '"tag_name"'
           if (-not $exists) {
+            Write-Host "creating 'latest' release"
             gh release create latest --title "最新构建(自动更新通道)" --notes "每次 push 自动构建。安装器支持应用内热更新。" --repo $repo --latest
           }
           foreach ($a in $artifacts) { gh release upload latest $a --repo $repo --clobber }

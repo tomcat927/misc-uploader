@@ -1,8 +1,10 @@
 // openlist.rs — OpenList client: REST (login/list) + WebDAV (PUT/MKCOL). rustls HTTPS.
+use crate::log;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::RwLock;
+use std::time::Instant;
 use tokio_util::io::ReaderStream;
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,13 +74,16 @@ impl OpenListClient {
             .await
             .map_err(|e| format!("login parse: {e}"))?;
         if resp.code != 200 {
-            return Err(resp.message.unwrap_or_else(|| "login failed".into()));
+            let m = resp.message.unwrap_or_else(|| "login failed".into());
+            log::log(&format!("login FAILED: {m}"));
+            return Err(m);
         }
         let token = resp
             .data
             .and_then(|d| d.get("token").and_then(|t| t.as_str()).map(String::from))
             .ok_or("login: no token in response")?;
         *self.token.write().unwrap() = Some(token.clone());
+        log::log(&format!("login OK (user {})", self.username));
         Ok(token)
     }
 
@@ -96,8 +101,12 @@ impl OpenListClient {
             .await
             .map_err(|e| format!("list parse: {e}"))?;
         if resp.code != 200 {
-            return Err(resp.message.unwrap_or_else(|| format!("list {path} failed")));
+            let m = resp.message.unwrap_or_else(|| format!("list {path} failed"));
+            log::log(&format!("list {path} FAILED: {m}"));
+            return Err(m);
         }
+        let n = resp.data.as_ref().and_then(|d| d.content.as_ref()).map(|c| c.len()).unwrap_or(0);
+        log::log(&format!("list {path}: {n} entries"));
         Ok(resp
             .data
             .and_then(|d| d.content)
@@ -122,8 +131,10 @@ impl OpenListClient {
                 .map_err(|e| format!("MKCOL {cur}: {e}"))?;
             let st = res.status().as_u16();
             if st != 201 && st != 200 && st != 405 && st != 301 {
+                log::log(&format!("MKCOL {cur} FAILED -> {st}"));
                 return Err(format!("MKCOL {cur} -> {st}"));
             }
+            log::log(&format!("MKCOL {cur} -> {st}"));
         }
         Ok(())
     }
@@ -151,8 +162,10 @@ impl OpenListClient {
         let st = res.status().as_u16();
         if !(200..300).contains(&st) {
             let t = res.text().await.unwrap_or_default();
+            log::log(&format!("PUT {rel} FAILED -> {st}"));
             return Err(format!("PUT {rel} -> {st} {}", t.chars().take(120).collect::<String>()));
         }
+        log::log(&format!("PUT {rel}: complete ({} bytes, {:.1}s)", total, t0.elapsed().as_secs_f64()));
         Ok(total)
     }
 }
