@@ -5,7 +5,7 @@ use crate::openlist::OpenListClient;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 static LOG: OnceLock<AppLog> = OnceLock::new();
 static SYNC_DISABLED_LOGGED: AtomicBool = AtomicBool::new(false);

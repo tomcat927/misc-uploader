@@ -144,6 +144,8 @@ impl OpenListClient {
             .await
             .map_err(|e| format!("stat {file_path}: {e}"))?;
         let total = meta.len();
+        log::log(&format!("PUT {rel}: begin ({} bytes)", total));
+        let t0 = Instant::now();
         let file = tokio::fs::File::open(file_path)
             .await
             .map_err(|e| format!("open {file_path}: {e}"))?;
