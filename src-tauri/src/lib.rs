@@ -10,6 +10,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tokio::io::AsyncReadExt;
 use tauri::{DragDropEvent, Emitter, Manager, State, WindowEvent};
 
 pub struct AppState {
