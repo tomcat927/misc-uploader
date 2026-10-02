@@ -1,0 +1,69 @@
+name: app-build
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Generate app icon (System.Drawing -> tauri icon)
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap(512, 512)
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.Clear([System.Drawing.Color]::FromArgb(45, 85, 155))
+          $font = New-Object System.Drawing.Font('Segoe UI', 220, [System.Drawing.FontStyle]::Bold)
+          $g.DrawString('M', $font, [System.Drawing.Brushes]::White, 110, 90)
+          $g.Dispose()
+          $bmp.Save("$PWD/icon-source.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          npx tauri icon "$PWD/icon-source.png"
+
+      - name: Smoke test (login + list against real OpenList)
+        env:
+          MISC_URL: ${{ secrets.MISC_URL }}
+          MISC_USER: ${{ secrets.MISC_USER }}
+          MISC_PASS: ${{ secrets.MISC_PASS }}
+        shell: pwsh
+        run: ./test/smoke.ps1
+
+      - name: Build (nsis)
+        run: npx tauri build
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: misc-uploader-setup
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: misc-uploader-setup
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe

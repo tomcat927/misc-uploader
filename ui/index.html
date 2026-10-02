@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>misc-uploader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <span id="status" class="status disconnected">● 未连接</span>
+    <span id="conn-user"></span>
+    <button id="btn-settings">设置</button>
+  </header>
+
+  <div id="settings-panel" class="hidden">
+    <label>服务器地址 <input id="cfg-url" placeholder="https://your-openlist:5245" /></label>
+    <label>用户名 <input id="cfg-user" autocomplete="off" /></label>
+    <label>密码 <input id="cfg-pass" type="password" placeholder="留空 = 不修改" /></label>
+    <button id="cfg-save">保存并连接</button>
+    <span id="cfg-msg"></span>
+  </div>
+
+  <main>
+    <aside id="tree-pane">
+      <div class="pane-title">目标目录(点击选择)</div>
+      <div id="tree"></div>
+    </aside>
+
+    <section id="right">
+      <div id="dropzone">
+        <div class="dz-icon">📥</div>
+        <div>把文件 / 文件夹拖到这里</div>
+        <div class="mode-row">
+          <label><input type="radio" name="mode" value="manual" checked /> 手动:上传到
+            <code id="target-display">/(misc 根目录)</code></label>
+          <label><input type="radio" name="mode" value="auto" /> 自动:按修改时间 → auto/YYYY/MM/</label>
+        </div>
+      </div>
+
+      <div id="queue-pane">
+        <div class="queue-bar">
+          <span id="queue-stats">队列空闲</span>
+          <span>
+            <button id="btn-retry">重试失败</button>
+            <button id="btn-clear">清空已完成</button>
+          </span>
+        </div>
+        <div id="queue"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
