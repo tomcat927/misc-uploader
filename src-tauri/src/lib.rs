@@ -190,6 +190,15 @@ fn clear_finished(state: State<AppState>) {
     }
 }
 
+#[tauri::command]
+fn open_log_dir(state: State<AppState>) {
+    if let Some(p) = state.config_path.lock().unwrap().clone() {
+        let logs = p.parent().unwrap().join("logs");
+        let _ = std::fs::create_dir_all(&logs);
+        let _ = std::process::Command::new("explorer").arg(logs).spawn();
+    }
+}
+
 // ---- hot update ----
 
 #[tauri::command]
@@ -469,6 +478,7 @@ pub fn run() {
             get_queue,
             retry_failed,
             clear_finished,
+            open_log_dir,
             check_update,
             install_update
         ])

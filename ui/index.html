@@ -7,51 +7,83 @@
 </head>
 <body>
   <header>
-    <span id="status" class="status disconnected">● 未连接</span>
-    <span id="conn-user"></span>
+    <span class="brand">📦 <b>misc-uploader</b></span>
+    <span id="status" class="badge disconnected">未连接</span>
+    <span id="conn-user" class="dim"></span>
+    <span class="spacer"></span>
     <span id="app-version" class="ver"></span>
-    <button id="btn-settings">设置</button>
+    <button id="btn-settings" class="btn ghost">⚙ 设置</button>
   </header>
 
-  <div id="settings-panel" class="hidden">
-    <label>服务器地址 <input id="cfg-url" placeholder="https://your-openlist:5245" /></label>
-    <label>用户名 <input id="cfg-user" autocomplete="off" /></label>
-    <label>密码 <input id="cfg-pass" type="password" placeholder="留空 = 不修改" /></label>
-    <button id="cfg-save">保存并连接</button>
-    <span id="cfg-msg"></span>
-    <button id="btn-update">检查更新</button>
-    <span id="update-msg"></span>
-  </div>
-
-  <main>
-    <aside id="tree-pane">
-      <div class="pane-title">目标目录(点击选择)</div>
+  <!-- 主视图:目录树 + 拖拽 + 队列 -->
+  <div id="view-main" class="view">
+    <aside id="tree-pane" class="card">
+      <div class="pane-title">目标目录 <span class="dim">(点击选择)</span></div>
       <div id="tree"></div>
     </aside>
 
     <section id="right">
-      <div id="dropzone">
+      <div id="dropzone" class="card">
         <div class="dz-icon">📥</div>
-        <div>把文件 / 文件夹拖到这里</div>
+        <div class="dz-main">把文件 / 文件夹拖到这里</div>
         <div class="mode-row">
-          <label><input type="radio" name="mode" value="manual" checked /> 手动:上传到
-            <code id="target-display">/(misc 根目录)</code></label>
-          <label><input type="radio" name="mode" value="auto" /> 自动:按修改时间 → auto/YYYY/MM/</label>
+          <label class="radio"><input type="radio" name="mode" value="manual" checked />
+            手动 → <code id="target-display" class="chip">/misc(根目录)</code></label>
+          <label class="radio"><input type="radio" name="mode" value="auto" />
+            自动 → <code class="chip dim">auto/年/月</code>(按文件修改时间)</label>
         </div>
       </div>
 
-      <div id="queue-pane">
+      <div id="queue-pane" class="card">
         <div class="queue-bar">
-          <span id="queue-stats">队列空闲</span>
-          <span>
-            <button id="btn-retry">重试失败</button>
-            <button id="btn-clear">清空已完成</button>
-          </span>
+          <span id="queue-stats" class="dim">队列空闲</span>
+          <span class="spacer"></span>
+          <button id="btn-retry" class="btn ghost">重试失败</button>
+          <button id="btn-clear" class="btn ghost">清空已完成</button>
         </div>
         <div id="queue"></div>
       </div>
     </section>
-  </main>
+  </div>
+
+  <!-- 设置视图 -->
+  <div id="view-settings" class="view hidden">
+    <div class="settings-wrap">
+      <button id="btn-back" class="btn ghost">← 返回</button>
+
+      <section class="card">
+        <h3>连接</h3>
+        <label class="field">OpenList 服务器地址
+          <input id="cfg-url" placeholder="https://your-openlist-host:5245" />
+        </label>
+        <p class="hint">填 OpenList 的地址即可(不填 /dav 后缀):软件自动使用它的
+          <b>WebDAV 接口(/dav)</b>上传文件、<b>API</b> 列举目录。账号 = 该 OpenList 上的用户,建议使用单独创建的低权限账号。</p>
+        <label class="field">用户名 <input id="cfg-user" autocomplete="off" /></label>
+        <label class="field">密码 <input id="cfg-pass" type="password" placeholder="留空 = 不修改" /></label>
+        <div class="row">
+          <button id="cfg-save" class="btn primary">保存并连接</button>
+          <span id="cfg-msg" class="msg"></span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>更新</h3>
+        <p>当前版本 <code class="chip" id="ver-setting"></code></p>
+        <div class="row">
+          <button id="btn-update" class="btn">检查更新</button>
+          <span id="update-msg" class="msg"></span>
+        </div>
+        <p class="hint">发现新版本会自动下载并验证签名,完成后软件自动重启。</p>
+      </section>
+
+      <section class="card">
+        <h3>诊断</h3>
+        <p class="hint">运行日志(北京时间)每 5 分钟自动同步到服务器的
+          <code class="chip">misc-uploader/logs/</code> 目录,可在 OpenList 网页直接查看。</p>
+        <button id="btn-logdir" class="btn">打开本地日志文件夹</button>
+      </section>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
