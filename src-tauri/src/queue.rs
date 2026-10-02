@@ -26,7 +26,7 @@ pub struct QueueItem {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryEntry {
     pub rel: String,
     pub time: u64,
@@ -118,7 +118,7 @@ impl Queue {
         for it in items.iter() {
             let mut g = it.lock().unwrap();
             if g.state == "failed" {
-                g.state = "hashing";
+                g.state = "hashing".to_string();
                 g.tries = 0;
                 g.error = None;
                 g.sha = None;

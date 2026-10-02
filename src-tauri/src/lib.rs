@@ -8,6 +8,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tokio::io::AsyncReadExt;
 use tauri::{DragDropEvent, Emitter, Manager, State, WindowEvent};
 
 pub struct AppState {
@@ -36,8 +37,14 @@ struct SettingsView {
 
 fn emit_queue(app: &tauri::AppHandle) {
     let state: State<AppState> = app.state();
-    if let Some(q) = state.queue.lock().unwrap().as_ref() {
-        let _ = app.emit("queue-updated", q.snapshot());
+    let snapshot = state
+        .queue
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|q| q.snapshot());
+    if let Some(items) = snapshot {
+        let _ = app.emit("queue-updated", items);
     }
 }
 
@@ -276,7 +283,7 @@ async fn process_item(
         .unwrap_or_default();
     if !dir.is_empty() && dir != "." {
         if let Err(e) = client.mkdirp(&dir).await {
-            retry_or_fail(app, q, &item, format!("mkdir: {e}"));
+            retry_or_fail(app, &item, format!("mkdir: {e}"));
             emit_queue(app);
             return;
         }
@@ -290,7 +297,7 @@ async fn process_item(
             drop(g);
         }
         Err(e) => {
-            retry_or_fail(app, q, &item, e);
+            retry_or_fail(app, &item, e);
         }
     }
     emit_queue(app);
@@ -327,10 +334,9 @@ fn fail_item(item: &queue::ArcItem, err: String) {
 
 fn current_mode(app: &tauri::AppHandle) -> (String, String) {
     let state: State<AppState> = app.state();
-    (
-        state.mode.lock().unwrap().clone(),
-        state.target.lock().unwrap().clone(),
-    )
+    let mode = state.mode.lock().unwrap().clone();
+    let target = state.target.lock().unwrap().clone();
+    (mode, target)
 }
 
 fn join_rel(dir: &str, name: &str) -> String {
