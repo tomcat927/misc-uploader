@@ -148,6 +148,34 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
 }
 
 #[tauri::command]
+async fn test_connection(
+    state: State<'_, AppState>,
+    base_url: String,
+    username: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = state.config.lock().unwrap().clone();
+    let base_url = base_url.trim_end_matches('/').to_string();
+    let password = if password.is_empty() { cfg.password } else { password };
+    if base_url.is_empty() || username.is_empty() || password.is_empty() {
+        return Err("服务器地址 / 用户名 / 密码 三项都必填(密码留空时使用已保存的密码)".into());
+    }
+    let client = OpenListClient::new(&base_url, &username, &password);
+    client.login().await?;
+    let entries = client.list("/").await?;
+    let dirs = entries.iter().filter(|e| e.is_dir).count();
+    log::log(&format!(
+        "test connection OK: {}@{} (root has {} dirs)",
+        username, base_url, dirs
+    ));
+    Ok(serde_json::json!({
+        "ok": true,
+        "rootDirs": dirs,
+        "davUrl": format!("{}/dav", base_url),
+    }))
+}
+
+#[tauri::command]
 async fn list_dir(state: State<'_, AppState>, path: String) -> Result<Vec<openlist::Entry>, String> {
     let client = state
         .client
@@ -472,6 +500,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
+            test_connection,
             connect,
             list_dir,
             set_target,

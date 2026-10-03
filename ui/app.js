@@ -148,6 +148,22 @@ function renderQueue(items) {
 
 listen("queue-updated", e => renderQueue(e.payload));
 
+// ---------- test connection (no save) ----------
+async function testConnection() {
+  setMsg("cfg-msg", "测试中…");
+  try {
+    const r = await invoke("test_connection", {
+      baseUrl: $("cfg-url").value.trim(),
+      username: $("cfg-user").value.trim(),
+      password: $("cfg-pass").value,
+    });
+    setMsg("cfg-msg", `连接成功 ✓(根目录 ${r.rootDirs} 个子目录,上传接口 ${r.davUrl})`, "ok");
+  } catch (e) {
+    setMsg("cfg-msg", "连接失败: " + e, "err");
+  }
+}
+$("btn-test").addEventListener("click", testConnection);
+
 // ---------- hot update ----------
 async function checkUpdate() {
   setMsg("update-msg", "检查中…");
