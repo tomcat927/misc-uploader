@@ -42,6 +42,30 @@ OpenList(WebDAV + REST)→ /opt/misc 热层 → cron 加密归档天翼(既有�
 
 Tauri 优势落地点:**拖拽由 Rust 原生事件接收**(on_window_event DragDrop),文件/文件夹直接给绝对路径,前端无需 webkitGetAsEntry 递归遍历。
 
+## 双协议设计(REST 元数据 + WebDAV 数据)
+
+代码里同时存在两套协议与两套认证,这是**刻意的分层**,不是历史包袱:
+
+| 操作 | 协议 | 认证 | 代码位置 |
+|---|---|---|---|
+| 登录(拿 token) | REST `POST /api/auth/login` | JSON body 用户名+密码 | `openlist.rs login()` |
+| 列目录(目录树) | REST `POST /api/fs/list` | `Authorization: <token>` | `openlist.rs list()` |
+| 建目录 / 上传 | WebDAV `MKCOL` / `PUT`(`/dav/*`) | `Basic base64(user:pass)`,每请求自带 | `openlist.rs mkdirp()/put_file()` |
+
+**上传走 WebDAV 的理由:**
+1. **流式、内存恒定**——REST `/api/fs/put` 的通用做法是整文件读进内存再发(openlist-uploader 的 `fs::read` 就是),几 GB 的杂物文件 = 几 GB 内存峰值;WebDAV `PUT` + reqwest 流式 body(256KB 缓冲)内存占用恒定。**这是拍板的核心理由。**
+2. **标准协议不绑私有接口**——WebDAV 是 RFC 标准(rclone、Windows 映射盘都认),换服务器软件上传链路不用改;alist 私有 REST 有版本怪癖(如 `POST /api/fs/put` 返回 200 + HTML 的假成功,openlist-uploader 踩过)。
+3. **无状态便于并发**——每个 PUT 自带 Basic 认证,失败重试不需要维护会话;上传队列 3 个并发工人互不干扰。
+
+**列目录走 REST 的理由:** PROPFIND 返回 XML 要手工解析;REST JSON 用 serde 一行反序列化成 `Vec<Entry>`。纯粹是正确的工具,无其他收益。
+
+**已知代价(当前接受,待用户评估是否调整):**
+- 两套认证并存,排查时会出现「REST 登录成功但 WebDAV 401」的表面矛盾——先分清是哪条链路的 401(见 AGENTS.md 坑 8);
+- token 会话过期不会自动重登(openlist-uploader 有 401 自动重登逻辑,本仓暂未抄),此时列目录报错而徽章仍显示「已连接」;
+- 若职责收缩为只传小日志文件,全 REST 更简单(openlist-uploader 即如此);本仓职责是任意大小文件上传,双协议收益成立。
+
+「已连接」徽章语义 = 内存里持有一次成功 `login()` 的会话(启动时配置齐全则自动连接);WebDAV 上传本身无状态,不依赖该徽章。
+
 ## CI(.github/workflows/app-build.yml)
 
 push(app/** 触发):

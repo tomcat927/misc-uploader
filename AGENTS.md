@@ -36,6 +36,7 @@ CI 按**中国时区**自动生成 `{年}.{月*100+日}.{时*100+分}`(如 `2026
 5. Actions 的 pwsh 把 stderr 转 error record:gh 命令判断要用 `gh api ... | Out-String -match` 模式,或 `$ErrorActionPreference = 'Continue'`
 6. `src-tauri/capabilities/default.json` 必须存在(`core:default`)——缺失时 getVersion/event listen 等核心 API 被静默拒绝(自定义 command 不受影响,所以表面正常,边缘功能先坏)
 7. tokio::fs::File 的 `.read()` 需要 `use tokio::io::AsyncReadExt;`
+8. **401 排查先分清链路**:REST(登录/列目录)用 token,WebDAV(MKCOL/PUT)用 Basic auth——「REST 登录成功但 WebDAV 401」不是矛盾,先确认是哪条链路、再核对对应凭据(详见 DESIGN.md「双协议设计」)
 
 ## 凭据与安全规约(不可妥协)
 
