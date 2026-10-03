@@ -92,6 +92,10 @@ async fn save_settings(
         password: if password.is_empty() || password == "********" { cur.password } else { password },
         log_sync: cur.log_sync,
     };
+    // 空 url/用户名的保存一律拒绝且不落盘,防止把已存配置覆盖成空(密码/日志同步设置同理不丢)
+    if cfg.base_url.is_empty() || cfg.username.is_empty() {
+        return Err("服务器地址和用户名必填(密码留空 = 沿用已保存)".into());
+    }
     let client = match do_connect(&cfg).await {
         Ok(c) => c,
         Err(e) => {

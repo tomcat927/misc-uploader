@@ -278,6 +278,6 @@ function escapeHtml(s) {
   }
   await refreshStatus();
   if ($("status").classList.contains("connected")) await renderTree();
-  else showView("settings");
+  else await openSettings(); // 必须走 openSettings 回填表单,showView 会留空表单,保存一次就误清已存配置
   renderQueue(await invoke("get_queue"));
 })();
