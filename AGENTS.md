@@ -19,6 +19,7 @@ misc-uploader:Windows 桌面工具(拖拽上传文件/文件夹到用户的 Open
 ## CI/CD 规约
 
 - workflow:`.github/workflows/app-build.yml`;触发:push 到 master / `v*` tag / 手动 dispatch
+- **新 push 自动取消同分支进行中的旧 run**(concurrency + cancel-in-progress,照抄 openlist-uploader);监听时只看最新 run,它包含之前所有提交
 - **每次 push 后必须监听构建结果直到 completed**(gh run watch 或 API 轮询);failure 则拉 `--log-failed` 分析修复重推,重复直到 success。这是硬性流程,不要构建一半就汇报完成。
 - 产物:nsis 安装包 + .sig 上传 artifact;同时发布到固定 tag `latest` 的 Release(exe/sig/latest.json,--clobber)——该 Release 是热更新常驻通道,不能删。
 - `v*` tag 触发正式 Release。
