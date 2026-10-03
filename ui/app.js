@@ -201,6 +201,18 @@ $("btn-retry").addEventListener("click", () => invoke("retry_failed"));
 $("btn-clear").addEventListener("click", () => invoke("clear_finished"));
 $("btn-logdir").addEventListener("click", () => invoke("open_log_dir"));
 
+(async () => {
+  try {
+    const li = await invoke("log_remote_info");
+    const el = $("log-target");
+    if (li.enabled) {
+      el.innerHTML = `📡 <code class="chip">${escapeHtml(li.base_url)}</code> 账号 <code class="chip">${escapeHtml(li.user)}</code> → <code class="chip">${escapeHtml(li.remote_dir)}/</code>`;
+    } else {
+      el.textContent = "远程日志未启用(本地开发构建),日志仅存在本机。";
+    }
+  } catch (e) { console.warn(e); }
+})();
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }

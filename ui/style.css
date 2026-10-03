@@ -146,6 +146,7 @@ header {
 }
 .field input:focus { outline: none; border-color: var(--accent); }
 .hint { color: var(--dim); font-size: 12px; margin: 6px 0 2px; }
+.logtarget { font-size: 12px; color: var(--dim); margin: 8px 0; word-break: break-all; }
 .row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .msg { font-size: 12px; color: var(--dim); }
 .msg.ok { color: var(--ok); }

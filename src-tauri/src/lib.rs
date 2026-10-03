@@ -219,6 +219,11 @@ fn clear_finished(state: State<AppState>) {
 }
 
 #[tauri::command]
+fn log_remote_info() -> log::RemoteInfo {
+    log::remote_info()
+}
+
+#[tauri::command]
 fn open_log_dir(state: State<AppState>) {
     if let Some(p) = state.config_path.lock().unwrap().clone() {
         let logs = p.parent().unwrap().join("logs");
@@ -507,6 +512,7 @@ pub fn run() {
             get_queue,
             retry_failed,
             clear_finished,
+            log_remote_info,
             open_log_dir,
             check_update,
             install_update

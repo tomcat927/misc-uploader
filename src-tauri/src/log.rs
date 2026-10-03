@@ -76,6 +76,24 @@ pub fn log(msg: &str) {
     println!("{line}");
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RemoteInfo {
+    pub enabled: bool,
+    pub base_url: Option<String>,
+    pub user: Option<String>,
+    pub remote_dir: String,
+}
+
+pub fn remote_info() -> RemoteInfo {
+    let (base, user) = (option_env!("LOG_BASE_URL"), option_env!("LOG_USER"));
+    RemoteInfo {
+        enabled: base.is_some() && user.is_some(),
+        base_url: base.map(String::from),
+        user: user.map(String::from),
+        remote_dir: REMOTE_DIR.into(),
+    }
+}
+
 // logger account client, credentials injected at compile time by CI (repo secrets).
 // built without them (local dev) -> remote sync disabled.
 fn logger_client() -> Option<OpenListClient> {
