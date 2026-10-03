@@ -80,6 +80,15 @@ async function refreshStatus() {
 }
 
 // ---------- directory tree ----------
+function fileEl(f, depth) {
+  const row = document.createElement("div");
+  row.className = "dir-file";
+  row.style.paddingLeft = 6 + depth * 2 + "px";
+  row.title = `${f.name} · ${fmtSize(f.size)}`;
+  row.innerHTML = `<span class="dir-toggle"></span>${escapeHtml(f.name)} <span class="dim">(${fmtSize(f.size)})</span>`;
+  return row;
+}
+
 function nodeEl(name, path, depth) {
   const wrap = document.createElement("div");
   const row = document.createElement("div");
@@ -90,6 +99,34 @@ function nodeEl(name, path, depth) {
   children.className = "dir-children";
   children.style.display = "none";
   let expanded = false;
+  let loaded = false;
+  const kidDirs = []; // { name, el } 供刷新后重定位选中目标
+
+  async function loadChildren() {
+    children.innerHTML = "";
+    kidDirs.length = 0;
+    try {
+      const entries = await invoke("list_dir", { path });
+      for (const d of entries.filter(e => e.is_dir)) {
+        const el = nodeEl(d.name, path ? path + "/" + d.name : d.name, depth + 1);
+        kidDirs.push({ name: d.name, el });
+        children.appendChild(el);
+      }
+      for (const f of entries.filter(e => !e.is_dir)) children.appendChild(fileEl(f, depth + 1));
+    } catch (e) { console.warn(e); }
+  }
+
+  async function expand() {
+    if (!loaded) { loaded = true; await loadChildren(); }
+    expanded = true;
+    children.style.display = "";
+    row.querySelector(".dir-toggle").textContent = "▾";
+  }
+  function collapse() {
+    expanded = false;
+    children.style.display = "none";
+    row.querySelector(".dir-toggle").textContent = "▸";
+  }
 
   row.addEventListener("click", async () => {
     document.querySelectorAll(".dir-node.selected").forEach(n => n.classList.remove("selected"));
@@ -98,31 +135,46 @@ function nodeEl(name, path, depth) {
     $("target-display").textContent = "/misc" + (path ? "/" + path : "");
     await invoke("set_target", { mode: "manual", target: path });
     document.querySelector('input[name="mode"][value="manual"]').checked = true;
-    if (!expanded) {
-      expanded = true;
-      row.querySelector(".dir-toggle").textContent = "▾";
-      try {
-        const entries = await invoke("list_dir", { path });
-        for (const d of entries.filter(e => e.is_dir)) children.appendChild(nodeEl(d.name, path ? path + "/" + d.name : d.name, depth + 1));
-      } catch (e) { console.warn(e); }
-    } else {
-      children.style.display = children.style.display === "none" ? "" : "none";
-    }
+    if (!expanded) await expand();
+    else collapse();
   });
 
   wrap.appendChild(row);
   wrap.appendChild(children);
+  wrap.row = row;
+  wrap.path = path;
+  wrap.expand = expand;
+  wrap.ensureLoaded = async () => { if (!loaded) { loaded = true; await loadChildren(); } };
+  wrap.childDirs = kidDirs;
   return wrap;
 }
 
-async function renderTree() {
+async function renderTree(reselect) {
+  const keep = reselect !== undefined ? reselect : "";
   const tree = $("tree");
   tree.innerHTML = "";
-  tree.appendChild(nodeEl("", "", 0));
-  await invoke("set_target", { mode: "manual", target: "" });
-  selectedTarget = "";
-  $("target-display").textContent = "/misc";
+  const root = nodeEl("", "", 0);
+  tree.appendChild(root);
+  await invoke("set_target", { mode: "manual", target: keep });
+  selectedTarget = keep;
+  $("target-display").textContent = "/misc" + (keep ? "/" + keep : "");
+  if (!keep) return;
+  // 刷新/新建后保留选中目标:沿路径逐级展开并高亮(list_dir 按需逐级拉取)
+  let node = root;
+  let acc = "";
+  for (const seg of keep.split("/").filter(Boolean)) {
+    await node.ensureLoaded();
+    acc = acc ? acc + "/" + seg : seg;
+    const next = (node.childDirs || []).find(c => c.name === seg);
+    if (!next) break;
+    await next.el.expand();
+    document.querySelectorAll(".dir-node.selected").forEach(n => n.classList.remove("selected"));
+    next.el.row.classList.add("selected");
+    node = next.el;
+  }
 }
+
+$("btn-refresh-tree").addEventListener("click", () => renderTree(selectedTarget));
 
 // ---------- drag & drop visual ----------
 const dz = $("dropzone");
@@ -152,7 +204,7 @@ $("newdir-name").addEventListener("keydown", async e => {
     await invoke("new_dir", { parent: selectedTarget, name });
     $("newdir-row").classList.add("hidden");
     $("newdir-name").value = "";
-    await renderTree();
+    await renderTree(selectedTarget); // 保留选中目标并重新拉取,新建的文件夹立即可见
   } catch (err) {
     $("newdir-name").value = "";
     $("newdir-name").placeholder = "失败: " + err;
@@ -184,13 +236,18 @@ function renderQueue(items) {
     const err = it.error ? `<span class="q-err" title="${escapeHtml(it.error)}">${escapeHtml(it.error)}</span>` : "";
     const pct = it.size ? Math.min(100, Math.round(100 * (it.uploaded || 0) / it.size)) : 0;
     const bar = it.state === "uploading" ? `<div class="q-bar"><div style="width:${pct}%"></div></div>` : "";
-    const relTxt = it.rel && ["done", "skipped"].includes(it.state) ? " → " + escapeHtml(it.rel) : "";
+    // rel 一旦确定(process 起步时)就显示去向,不必等到 done
+    const dest = it.rel ? ` <span class="q-arrow">→</span> /misc/${escapeHtml(it.rel)}` : "";
+    const pathTitle = escapeHtml(it.file_path || "") + (it.rel ? ` → /misc/${escapeHtml(it.rel)}` : "");
     row.innerHTML = `
-      <span class="q-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>
-      <span class="q-size">${fmtSize(it.size)}</span>
-      ${bar}
-      <span class="state-pill ${it.state}">${it.state}${relTxt}</span>
-      ${err}`;
+      <div class="q-top">
+        <span class="q-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>
+        <span class="q-size">${fmtSize(it.size)}</span>
+        ${bar}
+        <span class="state-pill ${it.state}">${it.state}</span>
+        ${err}
+      </div>
+      <div class="q-path" title="${pathTitle}">${escapeHtml(it.file_path || "")}${dest}</div>`;
     q.appendChild(row);
   }
   const counts = {};
@@ -293,12 +350,24 @@ async function saveGeneralPrefs() {
 ["gen-autostart", "gen-silent", "gen-minimize", "gen-checkupdate"].forEach(id => $(id).addEventListener("change", saveGeneralPrefs));
 
 // ---------- 密码框显示/隐藏 ----------
+// 常规回显是掩码 "********";点「显示」时若内容仍是掩码,则向后端取真实密码(reveal_password);
+// 若是用户正在输入的新密码则仅切换可见性。收起时恢复掩码回显。
 document.querySelectorAll(".pw-toggle").forEach(btn => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", async () => {
     const input = $(btn.dataset.target);
     const show = input.type === "password";
     input.type = show ? "text" : "password";
     btn.textContent = show ? "隐藏" : "显示";
+    if (show && input.value === "********") {
+      const kind = input.id === "cfg-pass" ? "main" : "logsync";
+      try {
+        input.value = await invoke("reveal_password", { kind });
+        input.dataset.revealed = "1";
+      } catch (e) { console.warn(e); }
+    } else if (!show && input.dataset.revealed) {
+      input.value = "********";
+      delete input.dataset.revealed;
+    }
   });
 });
 // 密码框掩码占位:聚焦全选,输入即替换;清空后保存 = 沿用已存密码(后端以 "********" 为哨兵)

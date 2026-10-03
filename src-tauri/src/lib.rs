@@ -140,6 +140,18 @@ fn load_settings(state: State<AppState>) -> SettingsView {
     }
 }
 
+// 密码「显示」按钮点击时按需下发真实密码(修订原「真实密码不下发前端」拍板,2026-10-03):
+// 密码本就明文存本机 config.json(见 DESIGN.md 密码体系),UI 按需展示不增加暴露面;常规回显仍是掩码。
+#[tauri::command]
+fn reveal_password(state: State<AppState>, kind: String) -> Result<String, String> {
+    let cfg = state.config.lock().unwrap();
+    match kind.as_str() {
+        "main" => Ok(cfg.password.clone()),
+        "logsync" => Ok(cfg.log_sync.password.clone()),
+        _ => Err("unknown password kind".into()),
+    }
+}
+
 // 纯落盘,不碰网络(连接是独立动作)。设置页无保存按钮,字段失焦即调用。
 #[tauri::command]
 fn save_settings(
@@ -481,16 +493,21 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 
 // ---- drag & drop intake ----
 
-fn collect_files(dir: &std::path::Path, out: &mut Vec<(String, String, u64, u64)>) {
+// (绝对路径, 拖入根下的相对路径(含根文件夹名,单文件 None), basename, size, mtime)
+type IntakeFile = (String, Option<String>, String, u64, u64);
+
+// 递归收集,保留文件夹内部结构:sub = 拖入根文件夹名/子路径/文件名(拍平会让不同子目录同名文件互相覆盖)
+fn collect_files(root_name: &str, dir: &std::path::Path, prefix: &str, out: &mut Vec<IntakeFile>) {
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
+            let seg = e.file_name().to_string_lossy().replace('\\', "/");
+            let sub = if prefix.is_empty() { format!("{root_name}/{seg}") } else { format!("{prefix}/{seg}") };
             if p.is_dir() {
-                collect_files(&p, out);
+                collect_files(root_name, &p, &sub, out);
             } else if let Ok(meta) = e.metadata() {
                 let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                let mtime = modified_ms(&meta);
-                out.push((p.to_string_lossy().into_owned(), name, meta.len(), mtime));
+                out.push((p.to_string_lossy().into_owned(), Some(sub), name, meta.len(), modified_ms(&meta)));
             }
         }
     }
@@ -511,13 +528,17 @@ fn handle_drop(app: tauri::AppHandle, paths: Vec<std::path::PathBuf>) {
         if !connected {
             return;
         }
-        let mut files = Vec::new();
+        let mut files: Vec<IntakeFile> = Vec::new();
         for p in paths {
             if p.is_dir() {
-                collect_files(&p, &mut files);
+                let root_name = p
+                    .file_name()
+                    .map(|s| s.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|| "root".into());
+                collect_files(&root_name, &p, "", &mut files);
             } else if let Ok(meta) = std::fs::metadata(&p) {
                 let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                files.push((p.to_string_lossy().into_owned(), name, meta.len(), modified_ms(&meta)));
+                files.push((p.to_string_lossy().into_owned(), None, name, meta.len(), modified_ms(&meta)));
             }
         }
         if let Some(q) = state.queue.lock().unwrap().as_ref() {
@@ -566,15 +587,18 @@ async fn process_item(
             emit_queue(app);
             return;
         }
-        // 3. resolve rel path
+        // 3. resolve rel path(拖入文件夹时保留内部结构:sub = 根文件夹名/子路径/文件名)
         if g.rel.is_none() {
             let (mode, target) = current_mode(app);
-            let name = g.name.clone();
+            let display_path = match g.sub.clone() {
+                Some(s) => s,
+                None => g.name.clone(),
+            };
             let mtime = g.mtime;
             g.rel = Some(if mode == "auto" {
-                format!("{}/{}", queue::auto_dir_for(mtime), name)
+                format!("{}/{}", queue::auto_dir_for(mtime), display_path)
             } else {
-                join_rel(&target, &name)
+                join_rel(&target, &display_path)
             });
         }
         g.state = "uploading".into();
@@ -815,6 +839,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
+            reveal_password,
             connect,
             list_dir,
             new_dir,

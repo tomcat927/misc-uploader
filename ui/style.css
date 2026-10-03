@@ -23,7 +23,6 @@ body {
   user-select: text; overflow: hidden;
 }
 button, .dir-node { user-select: none; }
-}
 
 /* ---------- header ---------- */
 header {
@@ -91,6 +90,11 @@ header {
 .dir-node.selected { background: var(--accent); color: #fff; }
 .dir-children { margin-left: 12px; border-left: 1px solid var(--border); padding-left: 5px; }
 .dir-toggle { color: var(--dim); display: inline-block; width: 14px; }
+.dir-file {
+  padding: 3px 8px; white-space: nowrap; font-size: 12px; color: var(--dim); cursor: default;
+  overflow: hidden; text-overflow: ellipsis;
+}
+#btn-refresh-tree { padding: 2px 8px; font-size: 11px; }
 
 #right { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 14px; gap: 14px; }
 
@@ -124,15 +128,21 @@ header {
 }
 #queue { flex: 1; overflow-y: auto; }
 .q-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 7px 12px; border-bottom: 1px solid #1d2530; font-size: 12.5px;
+  padding: 6px 12px; border-bottom: 1px solid #1d2530; font-size: 12.5px;
 }
 .q-row:last-child { border-bottom: none; }
+.q-top { display: flex; align-items: center; gap: 10px; }
 .q-name { flex: 0 1 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .q-size { color: var(--dim); width: 64px; text-align: right; flex-shrink: 0; }
 .q-bar { flex: 0 0 90px; height: 5px; background: #10151c; border-radius: 3px; overflow: hidden; }
 .q-bar > div { height: 100%; background: linear-gradient(90deg, var(--accent), #7aa8ff); width: 0; transition: width .25s; }
 .q-err { color: var(--dim); font-size: 11.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-path {
+  color: var(--dim); font-size: 11px; margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.q-path:empty { display: none; }
+.q-arrow { color: var(--accent); }
 
 .state-pill {
   flex-shrink: 0; font-size: 11px; padding: 1px 9px; border-radius: 999px;

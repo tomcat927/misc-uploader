@@ -14,8 +14,11 @@ pub const HISTORY_MAX: usize = 10000;
 pub struct QueueItem {
     pub id: String,
     pub name: String,
-    #[serde(skip)]
+    /// 本地绝对路径,下发前端用于「从哪来 → 到哪去」展示
     pub file_path: String,
+    /// 拖入文件夹时该文件在拖入根下的相对路径(含根文件夹名);单文件拖入为 None
+    #[serde(skip)]
+    pub sub: Option<String>,
     pub size: u64,
     pub mtime: u64,
     pub sha: Option<String>,
@@ -79,15 +82,16 @@ impl Queue {
         }
     }
 
-    pub fn add(&self, files: Vec<(String, String, u64, u64)>) {
-        // (file_path, name, size, mtime)
+    pub fn add(&self, files: Vec<(String, Option<String>, String, u64, u64)>) {
+        // (file_path, sub_path, name, size, mtime)
         let mut items = self.items.lock().unwrap();
-        for (file_path, name, size, mtime) in files {
+        for (file_path, sub, name, size, mtime) in files {
             let id = format!("u{}", self.id_counter.fetch_add(1, Ordering::Relaxed));
             items.push(Arc::new(Mutex::new(QueueItem {
                 id,
                 name,
                 file_path,
+                sub,
                 size,
                 mtime,
                 sha: None,
@@ -138,13 +142,7 @@ impl Queue {
             .lock()
             .unwrap()
             .iter()
-            .map(|it| {
-                let g = it.lock().unwrap();
-                QueueItem {
-                    file_path: String::new(),
-                    ..g.clone()
-                }
-            })
+            .map(|it| it.lock().unwrap().clone())
             .collect()
     }
 
