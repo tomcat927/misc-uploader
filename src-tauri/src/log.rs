@@ -74,7 +74,8 @@ pub fn log(msg: &str) {
 
 // sync all local log files to remote {remote_dir}/ — full overwrite per file name.
 // target account + dir come from user settings (openlist-uploader style), not compiled in.
-pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &str) -> Result<(), String> {
+// 返回上传的文件数(定时同步记日志、「立即上传」按钮回显用)。
+pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &str) -> Result<usize, String> {
     let client = OpenListClient::new(base_url, user, pass);
     let Some(l) = LOG.get() else {
         return Err("log not initialized".into());
@@ -89,19 +90,21 @@ pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &st
         }
     }
     if files.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     client.login().await?;
     client
         .mkdirp(remote_dir)
         .await
         .map_err(|e| format!("mkdir: {e}"))?;
+    let mut pushed = 0;
     for (path, name) in files {
         let remote = format!("{remote_dir}/{name}");
         client
             .put_file(&remote, path.to_string_lossy().as_ref(), None)
             .await
             .map_err(|e| format!("put {name}: {e}"))?;
+        pushed += 1;
     }
-    Ok(())
+    Ok(pushed)
 }

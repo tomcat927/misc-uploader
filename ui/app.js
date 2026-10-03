@@ -487,6 +487,21 @@ async function testLogSync() {
 }
 $("btn-ls-test").addEventListener("click", testLogSync);
 
+// ---------- manual log upload (no timer, no enabled check) ----------
+$("btn-ls-upload").addEventListener("click", async () => {
+  const btn = $("btn-ls-upload");
+  btn.disabled = true;
+  setMsg("ls-msg", "日志上传中…");
+  try {
+    const r = await invoke("upload_logs_now");
+    setMsg("ls-msg", `已上传 ${r.count} 个日志文件到 ${r.remoteDir}/`, "ok");
+  } catch (e) {
+    setMsg("ls-msg", "日志上传失败: " + e, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ---------- buttons ----------
 $("btn-settings").addEventListener("click", openSettings);
 $("btn-back").addEventListener("click", () => showView("main"));

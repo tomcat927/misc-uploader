@@ -250,8 +250,9 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
                 if !ls.enabled || ls.base_url.is_empty() || ls.username.is_empty() || ls.password.is_empty() || ls.remote_dir.is_empty() {
                     continue;
                 }
-                if let Err(e) = log::sync_remote(&ls.base_url, &ls.username, &ls.password, &ls.remote_dir).await {
-                    log::log(&format!("log sync: {e}"));
+                match log::sync_remote(&ls.base_url, &ls.username, &ls.password, &ls.remote_dir).await {
+                    Ok(n) => log::log(&format!("log sync: pushed {n} file(s)")),
+                    Err(e) => log::log(&format!("log sync: {e}")),
                 }
             }
         });
@@ -467,6 +468,22 @@ async fn test_log_sync(
         .map_err(|e| format!("目标目录不可写: {e}"))?;
     log::log(&format!("log sync test OK: {username}@{base_url} -> {remote_dir}"));
     Ok(serde_json::json!({ "ok": true, "remoteDir": remote_dir }))
+}
+
+// 「立即上传」:手动触发一次日志同步(不经定时器、不看 enabled 开关,凭据/目录齐即可),
+// 用于反馈问题前主动推一份最新日志
+#[tauri::command]
+async fn upload_logs_now(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let ls = state.config.lock().unwrap().log_sync.clone();
+    if ls.base_url.is_empty() || ls.username.is_empty() || ls.password.is_empty() {
+        return Err("日志服务器 / 账号 / 密码 未配置完整".into());
+    }
+    if ls.remote_dir.is_empty() {
+        return Err("日志存放目录未配置".into());
+    }
+    let n = log::sync_remote(&ls.base_url, &ls.username, &ls.password, &ls.remote_dir).await?;
+    log::log(&format!("log sync (manual): pushed {n} file(s) -> {}", ls.remote_dir));
+    Ok(serde_json::json!({ "ok": true, "count": n, "remoteDir": ls.remote_dir }))
 }
 
 #[tauri::command]
@@ -887,6 +904,7 @@ pub fn run() {
             get_log_sync,
             set_log_sync,
             test_log_sync,
+            upload_logs_now,
             get_upload_prefs,
             set_upload_prefs,
             get_general_prefs,
