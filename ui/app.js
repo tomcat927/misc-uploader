@@ -480,7 +480,7 @@ async function testLogSync() {
       password: $("cfg-ls-pass").value,
       remoteDir: $("ls-dir").value.trim(),
     });
-    setMsg("ls-msg", `日志通道可用 ✓(远端目录 ${r.remoteDir}/ 已就绪)`, "ok");
+    setMsg("ls-msg", r.absoluteDir ? `日志通道可用 ✓ 实际落盘:${r.absoluteDir}` : `日志通道可用 ✓(远端目录 ${r.remoteDir}/ 已就绪)`, "ok");
   } catch (e) {
     setMsg("ls-msg", "日志通道不可用: " + e, "err");
   }
@@ -494,7 +494,13 @@ $("btn-ls-upload").addEventListener("click", async () => {
   setMsg("ls-msg", "日志上传中…");
   try {
     const r = await invoke("upload_logs_now");
-    setMsg("ls-msg", `已上传 ${r.count} 个日志文件到 ${r.remoteDir}/`, "ok");
+    if (!r.count) {
+      setMsg("ls-msg", "没有可上传的日志文件");
+    } else if (r.absoluteDir) {
+      setMsg("ls-msg", `已上传 ${r.count} 个日志文件 → ${r.absoluteDir}`, "ok");
+    } else {
+      setMsg("ls-msg", `已上传 ${r.count} 个日志文件到 ${r.remoteDir}/`, "ok");
+    }
   } catch (e) {
     setMsg("ls-msg", "日志上传失败: " + e, "err");
   } finally {

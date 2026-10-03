@@ -63,6 +63,33 @@ fn is_exists_error(msg: &str) -> bool {
     msg.to_lowercase().contains("exist")
 }
 
+// 把「相对可见根路径」解析成服务端绝对落点,仅用于展示/回显(真实落盘以服务端为准)。
+// 镜像服务端 JoinBasePath:FixAndCleanPath(反斜杠转斜杠、补前导斜杠、清 . 与 ..)后拼接;
+// 服务端**无前缀去重**(纯 Join),所以 base 拼错时这里同样暴露双层结果——这正是展示它的意义。
+pub fn resolve_absolute(base_path: &str, rel: &str) -> String {
+    fn clean(p: &str) -> String {
+        let p = p.replace('\\', "/");
+        let mut parts: Vec<&str> = Vec::new();
+        for seg in p.split('/') {
+            match seg {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                s => parts.push(s),
+            }
+        }
+        format!("/{}", parts.join("/"))
+    }
+    let base = clean(base_path);
+    let rel = clean(rel);
+    if base == "/" {
+        rel
+    } else {
+        format!("{base}{rel}")
+    }
+}
+
 impl OpenListClient {
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
         OpenListClient {
@@ -180,6 +207,33 @@ impl OpenListClient {
             Err(ApiFail::Auth) => Err(format!("{label}: 401 after re-login")),
             Err(ApiFail::Other(e)) => Err(format!("{label}: {e}")),
         }
+    }
+
+    // GET /api/me:当前登录用户信息,取 base_path,用于把相对路径解析成绝对落点(展示用)
+    pub async fn me_base_path(&self) -> Result<String, String> {
+        let resp = self.call_with_relogin("me", |token| self.me_req(token)).await?;
+        if resp.code != 200 {
+            return Err(resp.message.unwrap_or_else(|| "me failed".into()));
+        }
+        let data = resp.data.ok_or_else(|| "me: no data".to_string())?;
+        Ok(data
+            .get("base_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("/")
+            .to_string())
+    }
+
+    async fn me_req(&self, token: String) -> Result<ApiResp<serde_json::Value>, ApiFail> {
+        let url = format!("{}/api/me", self.base_url);
+        log::log(&format!("me request: GET {url}"));
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", &token)
+            .send()
+            .await
+            .map_err(|e| ApiFail::Other(format!("me request: {e}")))?;
+        self.api(resp).await
     }
 
     pub async fn list(&self, path: &str) -> Result<Vec<Entry>, String> {

@@ -1,7 +1,7 @@
 // log.rs — app logging: local append file (logs/applog-YYYYMMDD.log, China time) +
 // periodic sync to a user-configured remote dir via OpenList REST (dedicated logger
 // account, credentials + target dir configured in the settings page).
-use crate::openlist::OpenListClient;
+use crate::openlist::{resolve_absolute, OpenListClient};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -72,10 +72,16 @@ pub fn log(msg: &str) {
     println!("{line}");
 }
 
+// 同步结果:pushed = 上传文件数;absolute_dir = 服务端绝对落点(/api/me 的 base_path 解析,展示用;
+// 解析失败或无文件可传时为空)。
+pub struct SyncOutcome {
+    pub pushed: usize,
+    pub absolute_dir: String,
+}
+
 // sync all local log files to remote {remote_dir}/ — full overwrite per file name.
 // target account + dir come from user settings (openlist-uploader style), not compiled in.
-// 返回上传的文件数(定时同步记日志、「立即上传」按钮回显用)。
-pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &str) -> Result<usize, String> {
+pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &str) -> Result<SyncOutcome, String> {
     let client = OpenListClient::new(base_url, user, pass);
     let Some(l) = LOG.get() else {
         return Err("log not initialized".into());
@@ -90,9 +96,16 @@ pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &st
         }
     }
     if files.is_empty() {
-        return Ok(0);
+        return Ok(SyncOutcome { pushed: 0, absolute_dir: String::new() });
     }
     client.login().await?;
+    let absolute_dir = match client.me_base_path().await {
+        Ok(b) => resolve_absolute(&b, remote_dir),
+        Err(e) => {
+            log::log(&format!("resolve absolute log dir failed: {e}"));
+            String::new()
+        }
+    };
     client
         .mkdirp(remote_dir)
         .await
@@ -106,5 +119,5 @@ pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &st
             .map_err(|e| format!("put {name}: {e}"))?;
         pushed += 1;
     }
-    Ok(pushed)
+    Ok(SyncOutcome { pushed, absolute_dir })
 }

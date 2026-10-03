@@ -254,7 +254,10 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
                     continue;
                 }
                 match log::sync_remote(&ls.base_url, &ls.username, &ls.password, &ls.remote_dir).await {
-                    Ok(n) => log::log(&format!("log sync: pushed {n} file(s)")),
+                    Ok(r) if r.pushed > 0 => {
+                        log::log(&format!("log sync: pushed {} file(s) -> {}", r.pushed, r.absolute_dir))
+                    }
+                    Ok(_) => {}
                     Err(e) => log::log(&format!("log sync: {e}")),
                 }
             }
@@ -464,13 +467,23 @@ async fn test_log_sync(
     }
     let client = OpenListClient::new(&base_url, &username, &password);
     client.login().await?;
+    // 实际落点 = 账号可见根 + 相对路径(/api/me 取 base_path;失败不影响可写性验证,仅展示降级)
+    let absolute_dir = match client.me_base_path().await {
+        Ok(b) => openlist::resolve_absolute(&b, &remote_dir),
+        Err(e) => {
+            log::log(&format!("resolve absolute dir failed: {e}"));
+            String::new()
+        }
+    };
     // REST mkdir 逐级幂等(已存在不算失败);验证账号对目标目录确实可写
     client
         .mkdirp(&remote_dir)
         .await
         .map_err(|e| format!("目标目录不可写: {e}"))?;
-    log::log(&format!("log sync test OK: {username}@{base_url} -> {remote_dir}"));
-    Ok(serde_json::json!({ "ok": true, "remoteDir": remote_dir }))
+    log::log(&format!(
+        "log sync test OK: {username}@{base_url} -> {remote_dir} (实际落盘 {absolute_dir})"
+    ));
+    Ok(serde_json::json!({ "ok": true, "remoteDir": remote_dir, "absoluteDir": absolute_dir }))
 }
 
 // 「立即上传」:手动触发一次日志同步(不经定时器、不看 enabled 开关,凭据/目录齐即可),
@@ -484,9 +497,14 @@ async fn upload_logs_now(state: State<'_, AppState>) -> Result<serde_json::Value
     if ls.remote_dir.is_empty() {
         return Err("日志存放目录未配置".into());
     }
-    let n = log::sync_remote(&ls.base_url, &ls.username, &ls.password, &ls.remote_dir).await?;
-    log::log(&format!("log sync (manual): pushed {n} file(s) -> {}", ls.remote_dir));
-    Ok(serde_json::json!({ "ok": true, "count": n, "remoteDir": ls.remote_dir }))
+    let outcome = log::sync_remote(&ls.base_url, &ls.username, &ls.password, &ls.remote_dir).await?;
+    log::log(&format!(
+        "log sync (manual): pushed {} file(s) -> {} ({})",
+        outcome.pushed, outcome.absolute_dir, ls.remote_dir
+    ));
+    Ok(serde_json::json!({
+        "ok": true, "count": outcome.pushed, "remoteDir": ls.remote_dir, "absoluteDir": outcome.absolute_dir,
+    }))
 }
 
 #[tauri::command]
