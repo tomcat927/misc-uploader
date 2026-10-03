@@ -22,7 +22,7 @@ pub struct AppState {
     pub config_path: Mutex<Option<PathBuf>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LogSyncConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -90,6 +90,7 @@ async fn save_settings(
         base_url: base_url.trim_end_matches('/').to_string(),
         username,
         password: if password.is_empty() { cur.password } else { password },
+        log_sync: cur.log_sync,
     };
     let client = do_connect(&cfg).await?;
     if let Some(p) = state.config_path.lock().unwrap().clone() {
