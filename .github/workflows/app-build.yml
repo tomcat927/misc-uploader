@@ -50,21 +50,10 @@ jobs:
           $bmp.Save("$PWD/icon-source.png", [System.Drawing.Imaging.ImageFormat]::Png)
           npx tauri icon "$PWD/icon-source.png"
 
-      - name: Smoke test (login + list against real OpenList)
-        env:
-          MISC_URL: ${{ secrets.MISC_URL }}
-          MISC_USER: ${{ secrets.MISC_USER }}
-          MISC_PASS: ${{ secrets.MISC_PASS }}
-        shell: pwsh
-        run: ./test/smoke.ps1
-
       - name: Build (nsis, signed for updater)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          LOG_BASE_URL: ${{ secrets.MISC_URL }}
-          LOG_USER: ${{ secrets.LOG_USER }}
-          LOG_PASS: ${{ secrets.LOG_PASS }}
         run: npx tauri build
 
       - name: Upload installer artifact

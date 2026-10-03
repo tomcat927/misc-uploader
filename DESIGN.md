@@ -19,6 +19,7 @@
 | 设置页回显 | **保存即落盘(含连接失败)**:用户填的服务器/账号/密码即使登录失败也保留(内存+配置文件),重进设置页原样回显,连接失败只影响「已连接」状态。**密码框掩码回显**:已存密码显示 8 位掩码点(真实密码不下发前端),聚焦全选、输入即替换、清空后保存 = 沿用;后端以 `"********"` 为哨兵值 = 沿用已存密码 |
 | 页面文字 | 内容文字可选中复制;仅按钮/目录树节点禁选(防误选);拖拽高亮只对文件拖拽生效 |
 | 远程日志验证 | 设置页独立「测试日志通道」按钮(REST 登录 + MKCOL `misc-uploader/logs` 验证可写,幂等);**保存本身不校验**——即时落盘不做网络请求,与「保存不丢用户输入」一致;后台每 5 分钟同步失败仅记本地日志 |
+| CI 服务器依赖 | **零**:CI 不登录任何真实服务器(2026-10-03 移除冒烟测试);应用的服务器/账号全部用户运行时配置,凭据不进 CI secrets |
 
 ## 边界(V1 不做)
 
@@ -44,7 +45,7 @@ Tauri 优势落地点:**拖拽由 Rust 原生事件接收**(on_window_event Drag
 push(app/** 触发):
 1. windows-latest + dtolnay/rust-toolchain + rust-cache
 2. PowerShell System.Drawing 生成源 icon → `npx @tauri-apps/cli icon`(产出 ico/icns/png 全套)
-3. 质量门:PowerShell 冒烟(Invoke-RestMethod 登录+列目录真实 OpenList,凭据走 repo Secrets:MISC_URL/MISC_USER/MISC_PASS)
+3. ~~质量门:PowerShell 冒烟~~ → **已移除(2026-10-03 拍板)**:脚本用 PowerShell 独立实现登录/列目录,测不到 Rust 客户端代码,只能证明服务器可用;CI 改为与任何真实服务器零耦合,应用连接全部由用户在设置页配置
 4. `npx tauri build`(nsis bundle)
 5. upload-artifact(misc-uploader-setup-<sha>.exe)
 
