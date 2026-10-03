@@ -77,10 +77,10 @@ fn load_settings(state: State<AppState>) -> SettingsView {
     }
 }
 
+// 纯落盘,不碰网络(连接是独立动作)。设置页无保存按钮,字段失焦即调用。
 #[tauri::command]
-async fn save_settings(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
+fn save_settings(
+    state: State<AppState>,
     base_url: String,
     username: String,
     password: String,
@@ -96,23 +96,11 @@ async fn save_settings(
     if cfg.base_url.is_empty() || cfg.username.is_empty() {
         return Err("服务器地址和用户名必填(密码留空 = 沿用已保存)".into());
     }
-    let client = match do_connect(&cfg).await {
-        Ok(c) => c,
-        Err(e) => {
-            // 连接失败也保留用户填的内容并落盘,否则重进设置页像被清空,用户以为保存丢失
-            if let Some(p) = state.config_path.lock().unwrap().clone() {
-                let _ = std::fs::create_dir_all(p.parent().unwrap());
-                let _ = std::fs::write(&p, serde_json::to_vec_pretty(&cfg).unwrap_or_default());
-            }
-            *state.config.lock().unwrap() = cfg;
-            return Err(e);
-        }
-    };
     if let Some(p) = state.config_path.lock().unwrap().clone() {
         let _ = std::fs::create_dir_all(p.parent().unwrap());
         let _ = std::fs::write(&p, serde_json::to_vec_pretty(&cfg).unwrap_or_default());
     }
-    start_session(&app, &state, Arc::new(client));
+    *state.config.lock().unwrap() = cfg;
     Ok(())
 }
 
@@ -182,34 +170,6 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
     }
     log::log(&format!("session started (user {})", state.config.lock().unwrap().username));
     emit_queue(app);
-}
-
-#[tauri::command]
-async fn test_connection(
-    state: State<'_, AppState>,
-    base_url: String,
-    username: String,
-    password: String,
-) -> Result<serde_json::Value, String> {
-    let cfg = state.config.lock().unwrap().clone();
-    let base_url = base_url.trim_end_matches('/').to_string();
-    let password = if password.is_empty() || password == "********" { cfg.password } else { password };
-    if base_url.is_empty() || username.is_empty() || password.is_empty() {
-        return Err("服务器地址 / 用户名 / 密码 三项都必填(密码留空时使用已保存的密码)".into());
-    }
-    let client = OpenListClient::new(&base_url, &username, &password);
-    client.login().await?;
-    let entries = client.list("/").await?;
-    let dirs = entries.iter().filter(|e| e.is_dir).count();
-    log::log(&format!(
-        "test connection OK: {}@{} (root has {} dirs)",
-        username, base_url, dirs
-    ));
-    Ok(serde_json::json!({
-        "ok": true,
-        "rootDirs": dirs,
-        "davUrl": format!("{}/dav", base_url),
-    }))
 }
 
 #[tauri::command]
@@ -585,7 +545,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
-            test_connection,
             connect,
             list_dir,
             set_target,

@@ -29,7 +29,7 @@ async function openSettings() {
   showView("settings");
 }
 
-async function saveSettings() {
+async function connectNow() {
   setMsg("cfg-msg", "连接中…");
   try {
     await invoke("save_settings", {
@@ -37,14 +37,30 @@ async function saveSettings() {
       username: $("cfg-user").value.trim(),
       password: $("cfg-pass").value,
     });
+    await invoke("connect");
     setMsg("cfg-msg", "已连接 ✓", "ok");
     await refreshStatus();
     await renderTree();
     setTimeout(() => showView("main"), 600);
   } catch (e) {
-    setMsg("cfg-msg", "失败: " + e, "err");
+    setMsg("cfg-msg", "连接失败: " + e, "err");
   }
 }
+
+// ---------- 自动保存:字段失焦即落盘,无保存按钮 ----------
+async function autoSaveMain() {
+  try {
+    await invoke("save_settings", {
+      baseUrl: $("cfg-url").value.trim(),
+      username: $("cfg-user").value.trim(),
+      password: $("cfg-pass").value,
+    });
+    setMsg("cfg-msg", "已自动保存 ✓", "ok");
+  } catch (e) {
+    setMsg("cfg-msg", e, "err");
+  }
+}
+["cfg-url", "cfg-user", "cfg-pass"].forEach(id => $(id).addEventListener("change", autoSaveMain));
 
 async function refreshStatus() {
   const s = await invoke("load_settings");
@@ -150,22 +166,6 @@ function renderQueue(items) {
 
 listen("queue-updated", e => renderQueue(e.payload));
 
-// ---------- test connection (no save) ----------
-async function testConnection() {
-  setMsg("cfg-msg", "测试中…");
-  try {
-    const r = await invoke("test_connection", {
-      baseUrl: $("cfg-url").value.trim(),
-      username: $("cfg-user").value.trim(),
-      password: $("cfg-pass").value,
-    });
-    setMsg("cfg-msg", `连接成功 ✓(根目录 ${r.rootDirs} 个子目录,上传接口 ${r.davUrl})`, "ok");
-  } catch (e) {
-    setMsg("cfg-msg", "连接失败: " + e, "err");
-  }
-}
-$("btn-test").addEventListener("click", testConnection);
-
 // ---------- hot update ----------
 async function checkUpdate() {
   setMsg("update-msg", "检查中…");
@@ -205,8 +205,8 @@ async function loadLogSync() {
   setMsg("ls-msg", ls.enabled ? "已启用" : "已关闭", ls.enabled ? "ok" : "");
 }
 
-async function saveLogSync() {
-  setMsg("ls-msg", "保存中…");
+// ---------- 远程日志自动保存(无保存按钮) ----------
+async function autoSaveLogSync() {
   try {
     await invoke("set_log_sync", {
       enabled: $("ls-enabled").checked,
@@ -214,11 +214,12 @@ async function saveLogSync() {
       username: $("cfg-ls-user").value.trim(),
       password: $("cfg-ls-pass").value,
     });
-    setMsg("ls-msg", "已保存 ✓", "ok");
+    setMsg("ls-msg", "已自动保存 ✓", "ok");
   } catch (e) {
-    setMsg("ls-msg", "失败: " + e, "err");
+    setMsg("ls-msg", e, "err");
   }
 }
+["ls-url", "cfg-ls-user", "cfg-ls-pass", "ls-enabled"].forEach(id => $(id).addEventListener("change", autoSaveLogSync));
 // 密码框掩码占位:聚焦全选,输入即替换;清空后保存 = 沿用已存密码(后端以 "********" 为哨兵)
 ["cfg-pass", "cfg-ls-pass"].forEach(id => $(id).addEventListener("focus", e => e.target.select()));
 
@@ -238,12 +239,10 @@ async function testLogSync() {
 }
 $("btn-ls-test").addEventListener("click", testLogSync);
 
-$("ls-save").addEventListener("click", saveLogSync);
-
 // ---------- buttons ----------
 $("btn-settings").addEventListener("click", openSettings);
 $("btn-back").addEventListener("click", () => showView("main"));
-$("cfg-save").addEventListener("click", saveSettings);
+$("btn-connect").addEventListener("click", connectNow);
 $("btn-update").addEventListener("click", checkUpdate);
 $("btn-retry").addEventListener("click", () => invoke("retry_failed"));
 $("btn-clear").addEventListener("click", () => invoke("clear_finished"));
