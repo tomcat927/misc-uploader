@@ -598,24 +598,27 @@ async fn process_item(
             return;
         }
     }
-    match client.put_file(&rel, &file_path).await {
+    let uploaded = client.put_file(&rel, &file_path).await;
+    match uploaded {
         Ok(_) => {
-            let mut g = item.lock().unwrap();
-            g.state = "done".into();
-            let sha = g.sha.clone().unwrap_or_default();
-            q.history_put(sha, queue::HistoryEntry { rel: rel.clone(), time: queue::now_ms() });
-            drop(g);
-            log::log(&format!("upload done: {rel}"));
-            // 刷新目标目录缓存,触发 OpenList 增量索引(便于搜索新文件;尽力而为,失败不影响上传结果)
-            if !dir.is_empty() && dir != "." {
-                if let Err(e) = client.refresh_dir(&dir).await {
-                    log::log(&format!("refresh dir {dir} failed (不影响上传): {e}"));
-                }
+            {
+                let mut g = item.lock().unwrap();
+                g.state = "done".into();
+                let sha = g.sha.clone().unwrap_or_default();
+                q.history_put(sha, queue::HistoryEntry { rel: rel.clone(), time: queue::now_ms() });
             }
+            log::log(&format!("upload done: {rel}"));
         }
         Err(e) => {
             log::log(&format!("upload error {rel}: {e}"));
             retry_or_fail(app, &item, e);
+        }
+    }
+    // 刷新目标目录缓存,触发 OpenList 增量索引(便于搜索新文件;尽力而为,失败不影响上传结果)
+    // 注意:必须在 MutexGuard 作用域之外 await(guard 非 Send)
+    if uploaded.is_ok() && !dir.is_empty() && dir != "." {
+        if let Err(e) = client.refresh_dir(&dir).await {
+            log::log(&format!("refresh dir {dir} failed (不影响上传): {e}"));
         }
     }
     emit_queue(app);
