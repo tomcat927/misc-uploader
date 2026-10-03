@@ -88,6 +88,33 @@ impl OpenListClient {
     }
 
     pub async fn list(&self, path: &str) -> Result<Vec<Entry>, String> {
+        if self.token.read().unwrap().is_none() {
+            self.login().await?;
+        }
+        let (code, message, data) = self.list_request(path).await?;
+        // token 会话过期:自动重登一次再试(参照 openlist-uploader 的 401 重登逻辑)
+        let (code, message, data) = if code == 401 {
+            log::log(&format!("list {path}: token expired, re-login once"));
+            self.login().await?;
+            self.list_request(path).await?
+        } else {
+            (code, message, data)
+        };
+        if code != 200 {
+            let m = message.unwrap_or_else(|| format!("list {path} failed"));
+            log::log(&format!("list {path} FAILED: {m}"));
+            return Err(m);
+        }
+        let entries = data.and_then(|d| d.content).unwrap_or_default();
+        log::log(&format!("list {path}: {} entries", entries.len()));
+        Ok(entries
+            .into_iter()
+            .map(|e| Entry { name: e.name, is_dir: e.is_dir, size: e.size })
+            .collect())
+    }
+
+    // 单次列目录请求,返回原始 (code, message, data),401 重试判定由调用方做
+    async fn list_request(&self, path: &str) -> Result<(i32, Option<String>, Option<ListData>), String> {
         let token = self.token.read().unwrap().clone().ok_or("not logged in")?;
         let resp: ApiResp<ListData> = self
             .http
@@ -100,20 +127,7 @@ impl OpenListClient {
             .json()
             .await
             .map_err(|e| format!("list parse: {e}"))?;
-        if resp.code != 200 {
-            let m = resp.message.unwrap_or_else(|| format!("list {path} failed"));
-            log::log(&format!("list {path} FAILED: {m}"));
-            return Err(m);
-        }
-        let n = resp.data.as_ref().and_then(|d| d.content.as_ref()).map(|c| c.len()).unwrap_or(0);
-        log::log(&format!("list {path}: {n} entries"));
-        Ok(resp
-            .data
-            .and_then(|d| d.content)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| Entry { name: e.name, is_dir: e.is_dir, size: e.size })
-            .collect())
+        Ok((resp.code, resp.message, resp.data))
     }
 
     // MKCOL each level; 405/301/200 mean "already there"
