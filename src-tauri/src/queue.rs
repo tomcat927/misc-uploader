@@ -192,13 +192,13 @@ impl Queue {
         let hist = self.history.lock().unwrap();
         let _ = std::fs::write(&self.history_path, serde_json::to_vec(&*hist).unwrap_or_default());
     }
+}
 
-    // 未连接时(内存队列不存在)从磁盘读历史,历史面板跨会话可用
-    pub fn load_history_rows(path: &std::path::Path) -> Vec<(String, u64)> {
-        let map: HashMap<String, HistoryEntry> = match std::fs::read(path) {
-            Ok(b) => serde_json::from_slice(&b).unwrap_or_default(),
-            Err(_) => return Vec::new(),
-        };
-        sort_history_rows(map.into_values().map(|e| (e.rel, e.time)).collect())
-    }
+// 未连接时(内存队列不存在)从磁盘读历史,历史面板跨会话可用
+pub fn load_history_rows(path: &std::path::Path) -> Vec<(String, u64)> {
+    let map: HashMap<String, HistoryEntry> = match std::fs::read(path) {
+        Ok(b) => serde_json::from_slice(&b).unwrap_or_default(),
+        Err(_) => return Vec::new(),
+    };
+    sort_history_rows(map.into_values().map(|e| (e.rel, e.time)).collect())
 }
