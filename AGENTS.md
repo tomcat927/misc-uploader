@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-misc-uploader:Windows 桌面工具(拖拽上传文件/文件夹到用户的 OpenList WebDAV 仓库),SHA-256 内容去重,按日期自动归类,支持热更新。服务于用户的杂物数字仓库(tianyi-misc-repo,私有仓,不在这里)。
+misc-uploader:Windows 桌面工具(拖拽上传文件/文件夹到用户的 OpenList 仓库,纯 REST API),SHA-256 内容去重,按日期自动归类,支持热更新。服务于用户的杂物数字仓库(tianyi-misc-repo,私有仓,不在这里)。
 
 - 技术栈:**Tauri 2**(Rust 后端 `src-tauri/` + 零构建 HTML 前端 `ui/`,`withGlobalTauri`,无 npm 前端工具链)
 - 设计文档:`DESIGN.md`(全部拍板决策与边界,改动方案前先读)
@@ -37,9 +37,9 @@ CI 按**中国时区**自动生成 `{年}.{月*100+日}.{时*100+分}`(如 `2026
 5. Actions 的 pwsh 把 stderr 转 error record:gh 命令判断要用 `gh api ... | Out-String -match` 模式,或 `$ErrorActionPreference = 'Continue'`
 6. `src-tauri/capabilities/default.json` 必须存在(`core:default`)——缺失时 getVersion/event listen 等核心 API 被静默拒绝(自定义 command 不受影响,所以表面正常,边缘功能先坏)
 7. tokio::fs::File 的 `.read()` 需要 `use tokio::io::AsyncReadExt;`
-8. **401 排查先分清链路**:REST(登录/列目录)用 token,WebDAV(MKCOL/PUT)用 Basic auth——「REST 登录成功但 WebDAV 401」不是矛盾,先确认是哪条链路、再核对对应凭据(详见 DESIGN.md「双协议设计」)
+8. **401 已是单一链路**(2026-10-04 迁移纯 REST 后):token 过期自动重登一次并重试(openlist.rs `call_with_relogin`),仍 401 = 凭据失效。历史坑:双协议时代 REST(token)/WebDAV(Basic)两套认证并存,「REST 登录成功但 WebDAV 401」需先分诊链路——已随 WebDAV 移除失效
 9. **Tauri 返回值字段是 snake_case**:invoke 入参 JS camelCase→Rust snake_case 自动映射,但**返回值**按 serde 原样序列化(如 `has_password`)——前端写成 `s.hasPassword` 永远 undefined 且不报错(曾导致开机自动连接从未执行)
-10. **`write!` 的 `{}` 对 u8 输出十进制数字不是字符**(曾把手写 base64 的前两位打成数字,所有 WebDAV 请求 401 而 REST 正常)——字节→字符必须 `as char`
+10. **`write!` 的 `{}` 对 u8 输出十进制数字不是字符**(曾把手写 base64 的前两位打成数字,所有 WebDAV 请求 401 而 REST 正常)——字节→字符必须 `as char`(手写 base64 已随 WebDAV 移除删除,教训本身通用)
 11. **MutexGuard 非 Send,不得跨 `.await`**——即使显式 `drop(g)` 也可能被生成器分析判为非 Send(spawn 的 Future 必须 Send);把 await 移到守卫作用域之外,守卫用块级作用域包裹
 12. **块尾表达式里的链式锁借用会 E0597**(`let x = { let st = app.state(); st.config.lock().unwrap().field };`)——锁的临时守卫存活期超过块内 `st` 的借用;把守卫绑定成具名局部变量再取字段
 

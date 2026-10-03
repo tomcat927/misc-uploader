@@ -1,6 +1,6 @@
 # misc-uploader
 
-Windows 桌面工具:把文件/文件夹**拖拽上传**到你的 OpenList(WebDAV)仓库,带内容级 SHA-256 去重与按日期自动归类。Tauri 2 构建,安装包 ~8MB。
+Windows 桌面工具:把文件/文件夹**拖拽上传**到你的 OpenList 仓库,带内容级 SHA-256 去重与按日期自动归类。Tauri 2 构建,安装包 ~8MB。
 
 ## 功能
 
@@ -31,7 +31,7 @@ Windows 桌面工具:把文件/文件夹**拖拽上传**到你的 OpenList(WebDA
 建议为软件创建专用账号(而非 admin):
 
 1. 管理后台新建用户,`base_path` 设为仓库根目录(如 `/misc`)——该用户所有操作被限制在此目录内
-2. 客户端上传走 WebDAV(`/dav`),需要该账号有 WebDAV 权限
+2. 客户端走 OpenList API(REST),账号需有写权限(权限位 bit3「可在目录下新建/上传」)
 
 ## 许可
 

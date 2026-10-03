@@ -1,6 +1,6 @@
 // log.rs — app logging: local append file (logs/applog-YYYYMMDD.log, China time) +
-// periodic sync to a user-configured remote dir via WebDAV (dedicated logger account,
-// credentials + target dir configured in the settings page).
+// periodic sync to a user-configured remote dir via OpenList REST (dedicated logger
+// account, credentials + target dir configured in the settings page).
 use crate::openlist::OpenListClient;
 use std::io::Write;
 use std::path::PathBuf;
@@ -99,7 +99,7 @@ pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &st
     for (path, name) in files {
         let remote = format!("{remote_dir}/{name}");
         client
-            .put_file(&remote, path.to_string_lossy().as_ref())
+            .put_file(&remote, path.to_string_lossy().as_ref(), None)
             .await
             .map_err(|e| format!("put {name}: {e}"))?;
     }

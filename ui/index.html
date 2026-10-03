@@ -77,8 +77,8 @@
         <label class="field">OpenList 服务器地址
           <input id="cfg-url" placeholder="https://your-openlist-host:5245" />
         </label>
-        <p class="hint">填 OpenList 的地址即可(不填 /dav 后缀):软件自动使用它的
-          <b>WebDAV 接口(/dav)</b>上传文件、<b>API</b> 列举目录。账号 = 该 OpenList 上的用户,建议使用单独创建的低权限账号。更改失焦后自动保存。</p>
+        <p class="hint">填 OpenList 的地址即可(不填 /dav 后缀):软件通过 OpenList 的
+          <b>API</b> 上传文件与列举目录。账号 = 该 OpenList 上的用户,建议使用单独创建的低权限账号。更改失焦后自动保存。</p>
         <label class="field">用户名 <input id="cfg-user" autocomplete="off" /></label>
         <label class="field">密码
           <div class="pw-row">
@@ -129,7 +129,7 @@
       <section class="card">
         <h3>远程日志</h3>
         <label class="check-row"><input type="checkbox" id="ls-enabled" /> 启用:运行日志定期上传(北京时间)</label>
-        <p class="hint">上传目标是一个 WebDAV 账号(可以是同一台 OpenList 的专用低权限账号)。日志按天一个文件落在下方目录
+        <p class="hint">上传目标是一个 OpenList 账号(可以是同一台 OpenList 的专用低权限账号)。日志按天一个文件落在下方目录
           (相对该账号可见的根路径),不经过加密归档。更改失焦后自动保存。</p>
         <label class="field">日志服务器地址
           <input id="ls-url" placeholder="https://your-openlist-host:5245" />

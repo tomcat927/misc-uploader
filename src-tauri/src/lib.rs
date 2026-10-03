@@ -32,7 +32,7 @@ pub struct LogSyncConfig {
     pub username: String,
     #[serde(default)]
     pub password: String,
-    /// 存放目录(WebDAV 相对路径,相对 logger 账号 base_path),设置页可改
+    /// 存放目录(REST 相对路径,相对 logger 账号可见根,服务端拼接 base_path),设置页可改
     #[serde(default = "default_remote_dir")]
     pub remote_dir: String,
     /// 定期上传间隔(分钟),设置页可改
@@ -460,7 +460,7 @@ async fn test_log_sync(
     }
     let client = OpenListClient::new(&base_url, &username, &password);
     client.login().await?;
-    // MKCOL 逐级幂等(已存在不算失败);验证账号对目标目录确实可写
+    // REST mkdir 逐级幂等(已存在不算失败);验证账号对目标目录确实可写
     client
         .mkdirp(&remote_dir)
         .await
@@ -635,10 +635,10 @@ async fn process_item(
     }
     emit_queue(app);
 
-    // 4. mkdir + upload
-    let (rel, file_path) = {
+    // 4. mkdir + upload(sha 顺路带上:X-File-Sha256 声明元数据,与去重同一次哈希)
+    let (rel, file_path, sha) = {
         let g = item.lock().unwrap();
-        (g.rel.clone().unwrap(), g.file_path.clone())
+        (g.rel.clone().unwrap(), g.file_path.clone(), g.sha.clone())
     };
     log::log(&format!("upload start: {rel}"));
     let dir = std::path::Path::new(&rel)
@@ -652,7 +652,7 @@ async fn process_item(
             return;
         }
     }
-    let result = client.put_file(&rel, &file_path).await;
+    let result = client.put_file(&rel, &file_path, sha.as_deref()).await;
     let uploaded_ok = result.is_ok();
     match result {
         Ok(_) => {

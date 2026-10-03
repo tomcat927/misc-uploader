@@ -1,11 +1,20 @@
-// openlist.rs — OpenList client: REST (login/list) + WebDAV (PUT/MKCOL). rustls HTTPS.
+// openlist.rs — OpenList client: 纯 REST(login/list/mkdir/put),rustls HTTPS。
+// 2026-10-04 按私有仓 tianyi-misc-repo `docs/client-protocol-decision.md` 拍板移除 WebDAV 链路
+// (MKCOL/PUT + Basic auth):建目录改 POST /api/fs/mkdir,上传改 PUT /api/fs/put(服务端流式)。
 use crate::log;
-use reqwest::Client;
+use reqwest::{Client, Response};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::RwLock;
 use std::time::Instant;
 use tokio_util::io::ReaderStream;
+
+// REST 调用失败的两类:会话失效(401,可重登一次重试)与其它(终局失败)
+enum ApiFail {
+    Auth,
+    Other(String),
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Entry {
@@ -42,11 +51,16 @@ pub struct OpenListClient {
     password: String,
 }
 
-fn enc_path(p: &str) -> String {
-    p.split('/')
-        .map(|seg| urlencoding::encode(seg).into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
+// File-Path 头统一封装:整条路径百分号编码(含 `/`),服务端 url.PathUnescape 还原后
+// 经 user.JoinPath 拼接用户 base_path(即客户端传 base 相对路径,与 list/mkdir 同语义)。
+// 该头禁止在别处裸拼(拍板防御清单 3)。
+fn file_path_header(p: &str) -> String {
+    urlencoding::encode(p).into_owned()
+}
+
+// mkdir「已存在」容错:alist 系对已存在目录报 code 500,消息措辞随版本/驱动略有差异,匹配 exist 词根
+fn is_exists_error(msg: &str) -> bool {
+    msg.to_lowercase().contains("exist")
 }
 
 impl OpenListClient {
@@ -107,25 +121,83 @@ impl OpenListClient {
         Ok(token)
     }
 
+    // ---- REST 应答统一防线(拍板防御清单)----
+    // 1) HTTP 401 / JSON code 401 → 会话失效,由 call_with_relogin 重登一次后重试(防循环);
+    // 2) 强制 JSON 解析:非 JSON(打错路由打到 SPA 兜底页、反代错误页等 "200+HTML" 假成功)一律按失败处理。
+    async fn api<T: DeserializeOwned>(&self, resp: Response) -> Result<ApiResp<T>, ApiFail> {
+        let status = resp.status().as_u16();
+        if status == 401 {
+            return Err(ApiFail::Auth);
+        }
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| ApiFail::Other(format!("read body: {e}")))?;
+        let parsed: ApiResp<T> = match serde_json::from_str(&text) {
+            Ok(p) => p,
+            Err(e) => {
+                let snippet: String = text.chars().take(200).collect();
+                log::log(&format!("non-JSON response (http {status}): {snippet}"));
+                return Err(ApiFail::Other(format!("non-JSON response (http {status}): {e}")));
+            }
+        };
+        if parsed.code == 401 {
+            return Err(ApiFail::Auth);
+        }
+        Ok(parsed)
+    }
+
+    // 会话失效统一处理:401 → 重登一次并重试(防循环),其余错误原样上抛。
+    // 调用方传入「以 token 为参执行一次请求」的闭包,重试时用新 token 重发(put 会重开文件流)。
+    async fn call_with_relogin<T, F, Fut>(&self, label: &str, op: F) -> Result<ApiResp<T>, String>
+    where
+        T: DeserializeOwned,
+        F: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = Result<ApiResp<T>, ApiFail>>,
+    {
+        let token = self
+            .token
+            .read()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "not logged in".to_string())?;
+        let resp = match op(token).await {
+            Err(ApiFail::Auth) => {
+                log::log(&format!("{label}: token expired, re-login once"));
+                self.login().await?;
+                let token = self
+                    .token
+                    .read()
+                    .unwrap()
+                    .clone()
+                    .ok_or_else(|| "not logged in".to_string())?;
+                op(token).await
+            }
+            r => r,
+        };
+        match resp {
+            Ok(r) => Ok(r),
+            Err(ApiFail::Auth) => Err(format!("{label}: 401 after re-login")),
+            Err(ApiFail::Other(e)) => Err(format!("{label}: {e}")),
+        }
+    }
+
     pub async fn list(&self, path: &str) -> Result<Vec<Entry>, String> {
         if self.token.read().unwrap().is_none() {
             self.login().await?;
         }
-        let (code, message, data) = self.list_request(path).await?;
-        // token 会话过期:自动重登一次再试(参照 openlist-uploader 的 401 重登逻辑)
-        let (code, message, data) = if code == 401 {
-            log::log(&format!("list {path}: token expired, re-login once"));
-            self.login().await?;
-            self.list_request(path).await?
-        } else {
-            (code, message, data)
-        };
-        if code != 200 {
-            let m = message.unwrap_or_else(|| format!("list {path} failed"));
+        let path_s = path.to_string();
+        let resp = self
+            .call_with_relogin(&format!("list {path}"), |token| {
+                self.list_req(&path_s, token, false, 1000)
+            })
+            .await?;
+        if resp.code != 200 {
+            let m = resp.message.unwrap_or_else(|| format!("list {path} failed"));
             log::log(&format!("list {path} FAILED: {m}"));
             return Err(m);
         }
-        let entries = data.and_then(|d| d.content).unwrap_or_default();
+        let entries = resp.data.and_then(|d| d.content).unwrap_or_default();
         log::log(&format!("list {path}: {} entries", entries.len()));
         Ok(entries
             .into_iter()
@@ -133,42 +205,17 @@ impl OpenListClient {
             .collect())
     }
 
-    // 单次列目录请求,返回原始 (code, message, data),401 重试判定由调用方做
-    async fn list_request(&self, path: &str) -> Result<(i32, Option<String>, Option<ListData>), String> {
-        let token = self.token.read().unwrap().clone().ok_or("not logged in")?;
-        let url = format!("{}/api/fs/list", self.base_url);
-        log::log(&format!("list request: POST {url} path={path}"));
-        let resp: ApiResp<ListData> = self
-            .http
-            .post(&url)
-            .header("Authorization", &token)
-            .json(&json!({"path": path, "page": 1, "per_page": 1000, "refresh": false}))
-            .send()
-            .await
-            .map_err(|e| {
-                log::log(&format!("list network error: {e}"));
-                format!("list request: {e}")
-            })?
-            .json()
-            .await
-            .map_err(|e| format!("list parse: {e}"))?;
-        Ok((resp.code, resp.message, resp.data))
-    }
-
-    // 强制刷新目录(list refresh=true 穿透缓存),触发 OpenList 增量索引更新 —— 上传成功后调用
+    // 上传成功后调用:refresh=true 穿透缓存,触发 OpenList 增量索引(尽力而为,失败不影响上传结果)
     pub async fn refresh_dir(&self, path: &str) -> Result<(), String> {
-        let token = self.token.read().unwrap().clone().ok_or("not logged in")?;
-        let resp: ApiResp<serde_json::Value> = self
-            .http
-            .post(format!("{}/api/fs/list", self.base_url))
-            .header("Authorization", &token)
-            .json(&json!({"path": path, "page": 1, "per_page": 1, "refresh": true}))
-            .send()
-            .await
-            .map_err(|e| format!("refresh request: {e}"))?
-            .json()
-            .await
-            .map_err(|e| format!("refresh parse: {e}"))?;
+        if self.token.read().unwrap().is_none() {
+            self.login().await?;
+        }
+        let path_s = path.to_string();
+        let resp = self
+            .call_with_relogin(&format!("refresh {path}"), |token| {
+                self.list_req(&path_s, token, true, 1)
+            })
+            .await?;
         if resp.code != 200 {
             let m = resp.message.unwrap_or_else(|| format!("refresh {path} failed"));
             return Err(m);
@@ -177,78 +224,151 @@ impl OpenListClient {
         Ok(())
     }
 
-    // MKCOL each level; 405/301/200 mean "already there"
+    async fn list_req(
+        &self,
+        path: &str,
+        token: String,
+        refresh: bool,
+        per_page: usize,
+    ) -> Result<ApiResp<ListData>, ApiFail> {
+        let url = format!("{}/api/fs/list", self.base_url);
+        log::log(&format!("list request: POST {url} path={path} refresh={refresh}"));
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", &token)
+            .json(&json!({"path": path, "page": 1, "per_page": per_page, "refresh": refresh}))
+            .send()
+            .await
+            .map_err(|e| ApiFail::Other(format!("list request: {e}")))?;
+        self.api(resp).await
+    }
+
+    // 逐级建目录(REST mkdir 不递归建父级)。"已存在"不算失败:错误消息含 exist 直接认;
+    // 措辞不符时退一步 fs/list 确认该级目录确实在(防消息措辞变化导致每次上传都失败)。
     pub async fn mkdirp(&self, rel_dir: &str) -> Result<(), String> {
+        if self.token.read().unwrap().is_none() {
+            self.login().await?;
+        }
         let mut cur = String::new();
         for seg in rel_dir.split('/').filter(|s| !s.is_empty()) {
             cur = if cur.is_empty() { seg.to_string() } else { format!("{cur}/{seg}") };
-            let url = format!("{}/dav/{}", self.base_url, enc_path(&cur));
-            let res = self
-                .http
-                .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &url)
-                .header("Authorization", basic_auth(&self.username, &self.password))
-                .send()
-                .await
-                .map_err(|e| format!("MKCOL {cur}: {e}"))?;
-            let st = res.status().as_u16();
-            if st != 201 && st != 200 && st != 405 && st != 301 {
-                log::log(&format!("MKCOL {cur} FAILED -> {st} ({url}, user {})", self.username));
-                return Err(format!("MKCOL {cur} -> {st}"));
+            let path_s = cur.clone();
+            let resp = self
+                .call_with_relogin(&format!("mkdir {cur}"), |token| self.mkdir_req(&path_s, token))
+                .await?;
+            if resp.code == 200 {
+                continue;
             }
-            log::log(&format!("MKCOL {cur} -> {st}"));
+            let m = resp.message.unwrap_or_else(|| format!("code {}", resp.code));
+            if is_exists_error(&m) {
+                log::log(&format!("mkdir {cur}: already exists (code {}, {m})", resp.code));
+                continue;
+            }
+            if self.dir_exists(&cur).await {
+                log::log(&format!("mkdir {cur}: exists per list fallback (code {}, {m})", resp.code));
+                continue;
+            }
+            log::log(&format!("mkdir {cur} FAILED: code {} {m}", resp.code));
+            return Err(format!("mkdir {cur}: {m}"));
         }
         Ok(())
     }
 
-    pub async fn put_file(&self, rel: &str, file_path: &str) -> Result<u64, String> {
-        let meta = tokio::fs::metadata(file_path)
-            .await
-            .map_err(|e| format!("stat {file_path}: {e}"))?;
-        let total = meta.len();
-        log::log(&format!("PUT {rel}: begin ({} bytes)", total));
-        let t0 = Instant::now();
-        let file = tokio::fs::File::open(file_path)
-            .await
-            .map_err(|e| format!("open {file_path}: {e}"))?;
-        let stream = ReaderStream::with_capacity(file, 256 * 1024);
-        let url = format!("{}/dav/{}", self.base_url, enc_path(rel));
-        let res = self
+    async fn mkdir_req(&self, path: &str, token: String) -> Result<ApiResp<serde_json::Value>, ApiFail> {
+        let url = format!("{}/api/fs/mkdir", self.base_url);
+        log::log(&format!("mkdir request: POST {url} path={path}"));
+        let resp = self
             .http
-            .put(&url)
-            .header("Authorization", basic_auth(&self.username, &self.password))
-            .header("Content-Type", "application/octet-stream")
-            .header("Content-Length", total.to_string())
-            .body(reqwest::Body::wrap_stream(stream))
+            .post(&url)
+            .header("Authorization", &token)
+            .json(&json!({"path": path}))
             .send()
             .await
-            .map_err(|e| format!("PUT {rel}: {e}"))?;
-        let st = res.status().as_u16();
-        if !(200..300).contains(&st) {
-            let t = res.text().await.unwrap_or_default();
-            log::log(&format!("PUT {rel} FAILED -> {st} ({url}) {}", t.chars().take(120).collect::<String>()));
-            return Err(format!("PUT {rel} -> {st} {}", t.chars().take(120).collect::<String>()));
+            .map_err(|e| ApiFail::Other(format!("mkdir request: {e}")))?;
+        self.api(resp).await
+    }
+
+    // fs/list 确认目录是否已存在(mkdir 错误消息不可靠时的兜底)
+    async fn dir_exists(&self, path: &str) -> bool {
+        let p = std::path::Path::new(path);
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.is_empty() {
+            return false;
+        }
+        let parent = p
+            .parent()
+            .map(|x| x.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        matches!(
+            self.list(&parent).await,
+            Ok(entries) if entries.iter().any(|e| e.is_dir && e.name == name)
+        )
+    }
+
+    // 上传:PUT /api/fs/put,请求体 = 文件流(256KB 缓冲,内存恒定)。服务端 FsStream 把 body
+    // 作为流直接交给存储层(server/handles/fsup.go 源码核验),客户端与服务端都不整读。
+    // 头:File-Path(file_path_header 统一编码)/ Content-Length(已知大小)/ X-File-Sha256
+    // (声明元数据,与去重同一次哈希;服务端记入 HashInfo,不做强校验)/ Overwrite 缺省 = 覆盖
+    // (与原 WebDAV PUT 语义一致)。
+    pub async fn put_file(&self, rel: &str, file_path: &str, sha256: Option<&str>) -> Result<u64, String> {
+        if self.token.read().unwrap().is_none() {
+            self.login().await?;
+        }
+        let total = tokio::fs::metadata(file_path)
+            .await
+            .map_err(|e| format!("stat {file_path}: {e}"))?
+            .len();
+        log::log(&format!("PUT {rel}: begin ({} bytes)", total));
+        let t0 = Instant::now();
+        let rel_s = rel.to_string();
+        let fp_s = file_path.to_string();
+        let sha_s = sha256.map(|s| s.to_string());
+        let resp = self
+            .call_with_relogin(&format!("PUT {rel}"), |token| {
+                self.put_req(&rel_s, &fp_s, sha_s.as_deref(), token, total)
+            })
+            .await?;
+        if resp.code != 200 {
+            let m = resp.message.unwrap_or_else(|| "upload rejected".into());
+            log::log(&format!("PUT {rel} FAILED: code {} {m}", resp.code));
+            return Err(format!("PUT {rel} -> {m}"));
         }
         log::log(&format!("PUT {rel}: complete ({} bytes, {:.1}s)", total, t0.elapsed().as_secs_f64()));
         Ok(total)
     }
-}
 
-fn basic_auth(user: &str, pass: &str) -> String {
-    use std::fmt::Write;
-    let mut out = String::from("Basic ");
-    let raw = format!("{user}:{pass}");
-    // base64 without external crate
-    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let b = raw.as_bytes();
-    for chunk in b.chunks(3) {
-        let n = (chunk[0] as u32) << 16
-            | (chunk.get(1).copied().unwrap_or(0) as u32) << 8
-            | (chunk.get(2).copied().unwrap_or(0) as u32);
-        let _ = write!(out, "{}{}{}{}",
-            T[(n >> 18) as usize & 63] as char,
-            T[(n >> 12) as usize & 63] as char,
-            if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' },
-            if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    async fn put_req(
+        &self,
+        rel: &str,
+        file_path: &str,
+        sha256: Option<&str>,
+        token: String,
+        total: u64,
+    ) -> Result<ApiResp<serde_json::Value>, ApiFail> {
+        let file = tokio::fs::File::open(file_path)
+            .await
+            .map_err(|e| ApiFail::Other(format!("open {file_path}: {e}")))?;
+        let stream = ReaderStream::with_capacity(file, 256 * 1024);
+        let url = format!("{}/api/fs/put", self.base_url);
+        let mut req = self
+            .http
+            .put(&url)
+            .header("Authorization", &token)
+            .header("File-Path", file_path_header(rel))
+            .header("Content-Type", "application/octet-stream")
+            .header("Content-Length", total.to_string());
+        if let Some(s) = sha256 {
+            req = req.header("X-File-Sha256", s);
+        }
+        let resp = req
+            .body(reqwest::Body::wrap_stream(stream))
+            .send()
+            .await
+            .map_err(|e| ApiFail::Other(format!("PUT {rel}: {e}")))?;
+        self.api(resp).await
     }
-    out
 }
