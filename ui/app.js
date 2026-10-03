@@ -22,7 +22,7 @@ async function openSettings() {
   const s = await invoke("load_settings");
   $("cfg-url").value = s.base_url || "";
   $("cfg-user").value = s.username || "";
-  $("cfg-pass").value = "";
+  $("cfg-pass").value = s.has_password ? "********" : "";
   $("cfg-pass").placeholder = s.has_password ? "留空 = 不修改" : "password";
   setMsg("cfg-msg", "");
   try { await loadLogSync(); } catch (e) { console.warn(e); }
@@ -200,7 +200,7 @@ async function loadLogSync() {
   $("ls-enabled").checked = ls.enabled;
   $("ls-url").value = ls.base_url || "";
   $("cfg-ls-user").value = ls.username || "";
-  $("cfg-ls-pass").value = "";
+  $("cfg-ls-pass").value = ls.password; // get_log_sync 掩码返回 "********",空 = 未设置
   $("cfg-ls-pass").placeholder = ls.password ? "留空 = 不修改" : "password";
   setMsg("ls-msg", ls.enabled ? "已启用" : "已关闭", ls.enabled ? "ok" : "");
 }
@@ -219,6 +219,9 @@ async function saveLogSync() {
     setMsg("ls-msg", "失败: " + e, "err");
   }
 }
+// 密码框掩码占位:聚焦全选,输入即替换;清空后保存 = 沿用已存密码(后端以 "********" 为哨兵)
+["cfg-pass", "cfg-ls-pass"].forEach(id => $(id).addEventListener("focus", e => e.target.select()));
+
 $("ls-save").addEventListener("click", saveLogSync);
 
 // ---------- buttons ----------

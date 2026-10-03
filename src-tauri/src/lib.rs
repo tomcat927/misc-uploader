@@ -89,7 +89,7 @@ async fn save_settings(
     let cfg = Config {
         base_url: base_url.trim_end_matches('/').to_string(),
         username,
-        password: if password.is_empty() { cur.password } else { password },
+        password: if password.is_empty() || password == "********" { cur.password } else { password },
         log_sync: cur.log_sync,
     };
     let client = match do_connect(&cfg).await {
@@ -189,7 +189,7 @@ async fn test_connection(
 ) -> Result<serde_json::Value, String> {
     let cfg = state.config.lock().unwrap().clone();
     let base_url = base_url.trim_end_matches('/').to_string();
-    let password = if password.is_empty() { cfg.password } else { password };
+    let password = if password.is_empty() || password == "********" { cfg.password } else { password };
     if base_url.is_empty() || username.is_empty() || password.is_empty() {
         return Err("服务器地址 / 用户名 / 密码 三项都必填(密码留空时使用已保存的密码)".into());
     }
