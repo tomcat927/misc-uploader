@@ -78,9 +78,10 @@ impl Default for GeneralPrefs {
 }
 
 fn default_remote_dir() -> String {
-    // 相对 logger 账号可见根(服务端拼 base_path)。logger 账号实际 base_path=/本地磁盘,
-    // 旧默认带 本地磁盘/ 前缀导致双写 /本地磁盘/本地磁盘/...(2026-10-04 修正,WebDAV 时代即如此)
-    "misc-uploader/logs".into()
+    // 相对 logger 账号可见根(服务端拼 base_path,logger 账号 base=/本地磁盘)。
+    // 2026-10-04 定归档方向:磁盘根统一 log/ 按应用划分 → /本地磁盘/log/misc-uploader/logs;
+    // 旧默认 本地磁盘/misc-uploader/logs 曾双写 /本地磁盘/本地磁盘/...(详见 DESIGN.md 踩坑记录)
+    "log/misc-uploader/logs".into()
 }
 fn default_sync_interval() -> u32 {
     5
