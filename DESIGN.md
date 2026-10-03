@@ -22,7 +22,7 @@
 | 队列排序与上传历史(2026-10-03 批) | 队列**分组排序(拍板方案 A)**:进行中(hashing/pending/processing/uploading/cooldown)按入队序置顶稳定;已完成(done/skipped/failed)按完成时间排,默认最新在前(QueueItem 新增 `finished_at` 打点,重试重新入队时清掉)。队列栏「↓ 新在前/↑ 旧在前」按钮只翻转已完成区块方向,记忆存 localStorage(零构建、热更新不丢);排序纯展示层,不影响先入先传的上传顺序与 retry/clear。**上传历史面板**:主视图队列栏「📜 历史」展开/收起,跨会话读 history.json(内容级去重,每条 = 远程路径 + 完成时间,同一内容记最新位置,上限 1 万条);`get_history` 命令按完成时间倒序分页(200/页,加载更多/⟳ 刷新),已连接读内存(put 即落盘,与磁盘等价)、未连接直接读盘 |
 | 页面文字 | 内容文字可选中复制;仅按钮/目录树节点禁选(防误选);拖拽高亮只对文件拖拽生效 |
 | 远程日志验证 | 设置页独立「测试日志通道」按钮(REST 登录 + fs/mkdir 目标目录逐级验证可写,幂等);**保存本身不校验**——自动保存不做网络请求,与「保存不丢用户输入」一致;后台每 5 分钟同步失败仅记本地日志 |
-| 远程日志协议与路径 | **协议随主链路迁移为 REST**(2026-10-04;原「保持 WebDAV」拍板被私有仓 client-protocol-decision.md 取代);**存放路径是设置页字段** `remote_dir`(默认 `log/misc-uploader/logs`,**相对 logger 账号可见根**,服务端拼 base_path——logger 账号实际 base_path=/本地磁盘,旧默认 `本地磁盘/misc-uploader/logs` 曾双写为 /本地磁盘/本地磁盘/...,2026-10-04 修正;归档方向 = 磁盘根统一 `log/` 按应用划分);**上传间隔** `sync_interval_minutes` 也是设置页字段(默认 5 分钟) |
+| 远程日志协议与路径 | **协议随主链路迁移为 REST**(2026-10-04;原「保持 WebDAV」拍板被私有仓 client-protocol-decision.md 取代);**存放路径是设置页字段** `remote_dir`(默认 `log/misc-uploader`,**相对 logger 账号可见根**,服务端拼 base_path——logger 账号实际 base_path=/本地磁盘,旧默认 `本地磁盘/misc-uploader/logs` 曾双写为 /本地磁盘/本地磁盘/...,2026-10-04 修正;归档方向 = 磁盘根统一 `log/` 按应用划分);**上传间隔** `sync_interval_minutes` 也是设置页字段(默认 5 分钟) |
 | 用户偏好(2026-10-03 批量) | 设置页**加宽加大字号**(1080px/14px 基准);密码框显示/隐藏切换;上传并发数(1-16,默认 3)与最大重试次数(0-10,默认 3)可设置,并发数下次「连接」生效;上传成功后 `list refresh=true` 刷新目标目录触发 OpenList 增量索引(尽力而为);开机自启(tauri-plugin-autostart,注册参数 `--autostart`)+ 静默启动(配置勾选或 `--autostart` 启动即隐藏窗口)+ 托盘(左键/菜单唤出,菜单含退出)+ 关闭最小化到托盘(`minimize_on_close` 默认开)均可配置;启动自动检查更新(可关) |
 | CI 服务器依赖 | **零**:CI 不登录任何真实服务器(2026-10-03 移除冒烟测试);应用的服务器/账号全部用户运行时配置,凭据不进 CI secrets |
 
@@ -105,7 +105,7 @@ Crypt/misc-sync.py,metadata 链路早已 REST,且灾备恢复不依赖客户端�
 跨应用抄配置前,先核对两边账号的 base_path 是否同一语义。
 
 **日志归档方向(2026-10-04 用户定)**:磁盘根统一建 `log/` 目录按应用归档日志,`remote_dir`
-最终定为 `log/misc-uploader/logs`(实际落盘 `/本地磁盘/log/misc-uploader/logs`),代码默认值同步;
+最终定为 `log/misc-uploader`(实际落盘 `/本地磁盘/log/misc-uploader`),代码默认值同步;
 openlist-uploader 等其余应用日志目录后续照此整改,整改时一并清理 `/本地磁盘/本地磁盘` 双层残留。
 
 ## CI(.github/workflows/app-build.yml)
