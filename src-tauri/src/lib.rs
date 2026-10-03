@@ -275,6 +275,30 @@ fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, usernam
 }
 
 #[tauri::command]
+async fn test_log_sync(
+    state: State<'_, AppState>,
+    base_url: String,
+    username: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    let ls = state.config.lock().unwrap().log_sync.clone();
+    let base_url = base_url.trim_end_matches('/').to_string();
+    let password = if password.is_empty() || password == "********" { ls.password } else { password };
+    if base_url.is_empty() || username.is_empty() || password.is_empty() {
+        return Err("日志服务器 / 账号 / 密码 三项都必填(密码留空时使用已保存的密码)".into());
+    }
+    let client = OpenListClient::new(&base_url, &username, &password);
+    client.login().await?;
+    // 目标目录固定为 misc-uploader/logs,MKCOL 幂等(已存在不算失败);验证账号确实可写
+    client
+        .mkdirp(log::REMOTE_DIR)
+        .await
+        .map_err(|e| format!("目标目录不可写: {e}"))?;
+    log::log(&format!("log sync test OK: {username}@{base_url}"));
+    Ok(serde_json::json!({ "ok": true, "remoteDir": log::REMOTE_DIR }))
+}
+
+#[tauri::command]
 fn open_log_dir(state: State<AppState>) {
     if let Some(p) = state.config_path.lock().unwrap().clone() {
         let logs = p.parent().unwrap().join("logs");
@@ -566,6 +590,7 @@ pub fn run() {
             clear_finished,
             get_log_sync,
             set_log_sync,
+            test_log_sync,
             open_log_dir,
             check_update,
             install_update

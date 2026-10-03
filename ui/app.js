@@ -222,6 +222,22 @@ async function saveLogSync() {
 // 密码框掩码占位:聚焦全选,输入即替换;清空后保存 = 沿用已存密码(后端以 "********" 为哨兵)
 ["cfg-pass", "cfg-ls-pass"].forEach(id => $(id).addEventListener("focus", e => e.target.select()));
 
+// ---------- test log sync channel (no save) ----------
+async function testLogSync() {
+  setMsg("ls-msg", "测试中…");
+  try {
+    const r = await invoke("test_log_sync", {
+      baseUrl: $("ls-url").value.trim(),
+      username: $("cfg-ls-user").value.trim(),
+      password: $("cfg-ls-pass").value,
+    });
+    setMsg("ls-msg", `日志通道可用 ✓(远端目录 ${r.remoteDir}/ 已就绪)`, "ok");
+  } catch (e) {
+    setMsg("ls-msg", "日志通道不可用: " + e, "err");
+  }
+}
+$("btn-ls-test").addEventListener("click", testLogSync);
+
 $("ls-save").addEventListener("click", saveLogSync);
 
 // ---------- buttons ----------

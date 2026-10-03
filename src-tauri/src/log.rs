@@ -15,7 +15,7 @@ pub struct AppLog {
 
 const APP_NAME: &str = "misc-uploader";
 // remote path (relative to logger account base_path): {appName}/logs/
-const REMOTE_DIR: &str = "misc-uploader/logs";
+pub const REMOTE_DIR: &str = "misc-uploader/logs";
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
