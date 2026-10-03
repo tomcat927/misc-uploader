@@ -202,6 +202,7 @@ async function loadLogSync() {
   $("cfg-ls-user").value = ls.username || "";
   $("cfg-ls-pass").value = ls.password; // get_log_sync 掩码返回 "********",空 = 未设置
   $("cfg-ls-pass").placeholder = ls.password ? "留空 = 不修改" : "password";
+  $("ls-dir").value = ls.remote_dir || "";
   setMsg("ls-msg", ls.enabled ? "已启用" : "已关闭", ls.enabled ? "ok" : "");
 }
 
@@ -213,13 +214,14 @@ async function autoSaveLogSync() {
       baseUrl: $("ls-url").value.trim(),
       username: $("cfg-ls-user").value.trim(),
       password: $("cfg-ls-pass").value,
+      remoteDir: $("ls-dir").value.trim(),
     });
     setMsg("ls-msg", "已自动保存 ✓", "ok");
   } catch (e) {
     setMsg("ls-msg", e, "err");
   }
 }
-["ls-url", "cfg-ls-user", "cfg-ls-pass", "ls-enabled"].forEach(id => $(id).addEventListener("change", autoSaveLogSync));
+["ls-url", "ls-dir", "cfg-ls-user", "cfg-ls-pass", "ls-enabled"].forEach(id => $(id).addEventListener("change", autoSaveLogSync));
 // 密码框掩码占位:聚焦全选,输入即替换;清空后保存 = 沿用已存密码(后端以 "********" 为哨兵)
 ["cfg-pass", "cfg-ls-pass"].forEach(id => $(id).addEventListener("focus", e => e.target.select()));
 
@@ -231,6 +233,7 @@ async function testLogSync() {
       baseUrl: $("ls-url").value.trim(),
       username: $("cfg-ls-user").value.trim(),
       password: $("cfg-ls-pass").value,
+      remoteDir: $("ls-dir").value.trim(),
     });
     setMsg("ls-msg", `日志通道可用 ✓(远端目录 ${r.remoteDir}/ 已就绪)`, "ok");
   } catch (e) {

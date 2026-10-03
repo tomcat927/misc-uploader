@@ -32,6 +32,13 @@ pub struct LogSyncConfig {
     pub username: String,
     #[serde(default)]
     pub password: String,
+    /// 存放目录(WebDAV 相对路径,相对 logger 账号 base_path),设置页可改
+    #[serde(default = "default_remote_dir")]
+    pub remote_dir: String,
+}
+
+fn default_remote_dir() -> String {
+    "本地磁盘/misc-uploader/logs".into()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -159,10 +166,10 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
                 let state: State<AppState> = app2.state();
                 let ls = state.config.lock().unwrap().log_sync.clone();
                 drop(state);
-                if !ls.enabled || ls.base_url.is_empty() || ls.username.is_empty() || ls.password.is_empty() {
+                if !ls.enabled || ls.base_url.is_empty() || ls.username.is_empty() || ls.password.is_empty() || ls.remote_dir.is_empty() {
                     continue;
                 }
-                if let Err(e) = log::sync_remote(&ls.base_url, &ls.username, &ls.password).await {
+                if let Err(e) = log::sync_remote(&ls.base_url, &ls.username, &ls.password, &ls.remote_dir).await {
                     log::log(&format!("log sync: {e}"));
                 }
             }
@@ -223,7 +230,7 @@ fn get_log_sync(state: State<AppState>) -> LogSyncConfig {
 }
 
 #[tauri::command]
-fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, username: String, password: String) {
+fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, username: String, password: String, remote_dir: String) {
     let mut cfg = state.config.lock().unwrap();
     let cur = cfg.log_sync.clone();
     cfg.log_sync = LogSyncConfig {
@@ -231,6 +238,7 @@ fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, usernam
         base_url: base_url.trim_end_matches('/').to_string(),
         username,
         password: if password.is_empty() || password == "********" { cur.password } else { password },
+        remote_dir: remote_dir.trim().trim_matches('/').to_string(),
     };
     if let Some(p) = state.config_path.lock().unwrap().clone() {
         let _ = std::fs::write(&p, serde_json::to_vec_pretty(&*cfg).unwrap_or_default());
@@ -244,22 +252,27 @@ async fn test_log_sync(
     base_url: String,
     username: String,
     password: String,
+    remote_dir: String,
 ) -> Result<serde_json::Value, String> {
     let ls = state.config.lock().unwrap().log_sync.clone();
     let base_url = base_url.trim_end_matches('/').to_string();
     let password = if password.is_empty() || password == "********" { ls.password } else { password };
+    let remote_dir = remote_dir.trim().trim_matches('/').to_string();
     if base_url.is_empty() || username.is_empty() || password.is_empty() {
         return Err("日志服务器 / 账号 / 密码 三项都必填(密码留空时使用已保存的密码)".into());
     }
+    if remote_dir.is_empty() {
+        return Err("日志存放目录必填".into());
+    }
     let client = OpenListClient::new(&base_url, &username, &password);
     client.login().await?;
-    // 目标目录固定为 misc-uploader/logs,MKCOL 幂等(已存在不算失败);验证账号确实可写
+    // MKCOL 逐级幂等(已存在不算失败);验证账号对目标目录确实可写
     client
-        .mkdirp(log::REMOTE_DIR)
+        .mkdirp(&remote_dir)
         .await
         .map_err(|e| format!("目标目录不可写: {e}"))?;
-    log::log(&format!("log sync test OK: {username}@{base_url}"));
-    Ok(serde_json::json!({ "ok": true, "remoteDir": log::REMOTE_DIR }))
+    log::log(&format!("log sync test OK: {username}@{base_url} -> {remote_dir}"));
+    Ok(serde_json::json!({ "ok": true, "remoteDir": remote_dir }))
 }
 
 #[tauri::command]

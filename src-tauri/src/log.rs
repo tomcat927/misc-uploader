@@ -1,6 +1,6 @@
 // log.rs — app logging: local append file (logs/applog-YYYYMMDD.log, China time) +
-// periodic sync to remote logs/ via WebDAV using a DEDICATED logger account
-// (credentials injected at compile time in CI; NOT encrypted, NOT in the misc hot layer).
+// periodic sync to a user-configured remote dir via WebDAV (dedicated logger account,
+// credentials + target dir configured in the settings page).
 use crate::openlist::OpenListClient;
 use std::io::Write;
 use std::path::PathBuf;
@@ -14,8 +14,6 @@ pub struct AppLog {
 }
 
 const APP_NAME: &str = "misc-uploader";
-// remote path (relative to logger account base_path): {appName}/logs/
-pub const REMOTE_DIR: &str = "misc-uploader/logs";
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -74,9 +72,9 @@ pub fn log(msg: &str) {
     println!("{line}");
 }
 
-// sync all local log files to remote {REMOTE_DIR}/ — full overwrite per file name.
-// target account comes from user settings (openlist-uploader style), not compiled in.
-pub async fn sync_remote(base_url: &str, user: &str, pass: &str) -> Result<(), String> {
+// sync all local log files to remote {remote_dir}/ — full overwrite per file name.
+// target account + dir come from user settings (openlist-uploader style), not compiled in.
+pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &str) -> Result<(), String> {
     let client = OpenListClient::new(base_url, user, pass);
     let Some(l) = LOG.get() else {
         return Err("log not initialized".into());
@@ -95,11 +93,11 @@ pub async fn sync_remote(base_url: &str, user: &str, pass: &str) -> Result<(), S
     }
     client.login().await?;
     client
-        .mkdirp(REMOTE_DIR)
+        .mkdirp(remote_dir)
         .await
         .map_err(|e| format!("mkdir: {e}"))?;
     for (path, name) in files {
-        let remote = format!("{REMOTE_DIR}/{name}");
+        let remote = format!("{remote_dir}/{name}");
         client
             .put_file(&remote, path.to_string_lossy().as_ref())
             .await
