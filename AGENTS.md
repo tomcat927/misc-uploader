@@ -38,6 +38,8 @@ CI 按**中国时区**自动生成 `{年}.{月*100+日}.{时*100+分}`(如 `2026
 6. `src-tauri/capabilities/default.json` 必须存在(`core:default`)——缺失时 getVersion/event listen 等核心 API 被静默拒绝(自定义 command 不受影响,所以表面正常,边缘功能先坏)
 7. tokio::fs::File 的 `.read()` 需要 `use tokio::io::AsyncReadExt;`
 8. **401 排查先分清链路**:REST(登录/列目录)用 token,WebDAV(MKCOL/PUT)用 Basic auth——「REST 登录成功但 WebDAV 401」不是矛盾,先确认是哪条链路、再核对对应凭据(详见 DESIGN.md「双协议设计」)
+9. **Tauri 返回值字段是 snake_case**:invoke 入参 JS camelCase→Rust snake_case 自动映射,但**返回值**按 serde 原样序列化(如 `has_password`)——前端写成 `s.hasPassword` 永远 undefined 且不报错(曾导致开机自动连接从未执行)
+10. **`write!` 的 `{}` 对 u8 输出十进制数字不是字符**(曾把手写 base64 的前两位打成数字,所有 WebDAV 请求 401 而 REST 正常)——字节→字符必须 `as char`
 
 ## 凭据与安全规约(不可妥协)
 

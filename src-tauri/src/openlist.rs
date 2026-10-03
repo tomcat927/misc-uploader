@@ -63,19 +63,39 @@ impl OpenListClient {
     }
 
     pub async fn login(&self) -> Result<String, String> {
-        let resp: ApiResp<serde_json::Value> = self
+        let url = format!("{}/api/auth/login", self.base_url);
+        // 协议日志:url/用户/响应状态全记;密码与 token 按凭据规约永不落日志
+        log::log(&format!("login request: POST {url} (user {}, password ***)", self.username));
+        let http_resp = self
             .http
-            .post(format!("{}/api/auth/login", self.base_url))
+            .post(&url)
             .json(&json!({"username": self.username, "password": self.password}))
             .send()
-            .await
-            .map_err(|e| format!("login request: {e}"))?
-            .json()
-            .await
-            .map_err(|e| format!("login parse: {e}"))?;
+            .await;
+        let http_resp = match http_resp {
+            Ok(r) => r,
+            Err(e) => {
+                log::log(&format!("login network error: {e}"));
+                return Err(format!("login request: {e}"));
+            }
+        };
+        let status = http_resp.status();
+        let text = http_resp.text().await.map_err(|e| format!("login read: {e}"))?;
+        let resp: ApiResp<serde_json::Value> = match serde_json::from_str(&text) {
+            Ok(p) => p,
+            Err(e) => {
+                let snippet: String = text.chars().take(200).collect();
+                log::log(&format!("login parse error: http {status}, body: {snippet}"));
+                return Err(format!("login parse: {e}"));
+            }
+        };
+        log::log(&format!(
+            "login response: http {status} code {} message {}",
+            resp.code,
+            resp.message.clone().unwrap_or_default()
+        ));
         if resp.code != 200 {
             let m = resp.message.unwrap_or_else(|| "login failed".into());
-            log::log(&format!("login FAILED: {m}"));
             return Err(m);
         }
         let token = resp
@@ -116,14 +136,19 @@ impl OpenListClient {
     // 单次列目录请求,返回原始 (code, message, data),401 重试判定由调用方做
     async fn list_request(&self, path: &str) -> Result<(i32, Option<String>, Option<ListData>), String> {
         let token = self.token.read().unwrap().clone().ok_or("not logged in")?;
+        let url = format!("{}/api/fs/list", self.base_url);
+        log::log(&format!("list request: POST {url} path={path}"));
         let resp: ApiResp<ListData> = self
             .http
-            .post(format!("{}/api/fs/list", self.base_url))
+            .post(&url)
             .header("Authorization", &token)
             .json(&json!({"path": path, "page": 1, "per_page": 1000, "refresh": false}))
             .send()
             .await
-            .map_err(|e| format!("list request: {e}"))?
+            .map_err(|e| {
+                log::log(&format!("list network error: {e}"));
+                format!("list request: {e}")
+            })?
             .json()
             .await
             .map_err(|e| format!("list parse: {e}"))?;
@@ -145,7 +170,7 @@ impl OpenListClient {
                 .map_err(|e| format!("MKCOL {cur}: {e}"))?;
             let st = res.status().as_u16();
             if st != 201 && st != 200 && st != 405 && st != 301 {
-                log::log(&format!("MKCOL {cur} FAILED -> {st}"));
+                log::log(&format!("MKCOL {cur} FAILED -> {st} ({url}, user {})", self.username));
                 return Err(format!("MKCOL {cur} -> {st}"));
             }
             log::log(&format!("MKCOL {cur} -> {st}"));
@@ -178,7 +203,7 @@ impl OpenListClient {
         let st = res.status().as_u16();
         if !(200..300).contains(&st) {
             let t = res.text().await.unwrap_or_default();
-            log::log(&format!("PUT {rel} FAILED -> {st}"));
+            log::log(&format!("PUT {rel} FAILED -> {st} ({url}) {}", t.chars().take(120).collect::<String>()));
             return Err(format!("PUT {rel} -> {st} {}", t.chars().take(120).collect::<String>()));
         }
         log::log(&format!("PUT {rel}: complete ({} bytes, {:.1}s)", total, t0.elapsed().as_secs_f64()));
@@ -198,7 +223,8 @@ fn basic_auth(user: &str, pass: &str) -> String {
             | (chunk.get(1).copied().unwrap_or(0) as u32) << 8
             | (chunk.get(2).copied().unwrap_or(0) as u32);
         let _ = write!(out, "{}{}{}{}",
-            T[(n >> 18) as usize & 63], T[(n >> 12) as usize & 63],
+            T[(n >> 18) as usize & 63] as char,
+            T[(n >> 12) as usize & 63] as char,
             if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' },
             if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
     }

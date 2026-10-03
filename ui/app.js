@@ -272,14 +272,19 @@ function escapeHtml(s) {
   const v = await getVersion().catch(() => "?");
   $("app-version").textContent = "v" + v;
   $("ver-setting").textContent = "v" + v;
+  let bootConnectErr = "";
   try {
     const s = await invoke("load_settings");
-    if (s.base_url && s.hasPassword) await invoke("connect");
+    // 后端 serde 返回值字段是 snake_case(has_password),不是 hasPassword——Tauri 只映射入参
+    if (s.base_url && s.has_password) await invoke("connect");
   } catch (e) {
-    console.warn("auto-connect:", e);
+    bootConnectErr = String(e);
   }
   await refreshStatus();
   if ($("status").classList.contains("connected")) await renderTree();
-  else await openSettings(); // 必须走 openSettings 回填表单,showView 会留空表单,保存一次就误清已存配置
+  else {
+    await openSettings(); // 必须走 openSettings 回填表单,showView 会留空表单,保存一次就误清已存配置
+    if (bootConnectErr) setMsg("cfg-msg", "自动连接失败: " + bootConnectErr, "err");
+  }
   renderQueue(await invoke("get_queue"));
 })();
