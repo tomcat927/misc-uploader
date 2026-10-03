@@ -155,6 +155,28 @@ impl OpenListClient {
         Ok((resp.code, resp.message, resp.data))
     }
 
+    // 强制刷新目录(list refresh=true 穿透缓存),触发 OpenList 增量索引更新 —— 上传成功后调用
+    pub async fn refresh_dir(&self, path: &str) -> Result<(), String> {
+        let token = self.token.read().unwrap().clone().ok_or("not logged in")?;
+        let resp: ApiResp<serde_json::Value> = self
+            .http
+            .post(format!("{}/api/fs/list", self.base_url))
+            .header("Authorization", &token)
+            .json(&json!({"path": path, "page": 1, "per_page": 1, "refresh": true}))
+            .send()
+            .await
+            .map_err(|e| format!("refresh request: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("refresh parse: {e}"))?;
+        if resp.code != 200 {
+            let m = resp.message.unwrap_or_else(|| format!("refresh {path} failed"));
+            return Err(m);
+        }
+        log::log(&format!("refresh dir OK (增量索引已触发): {path}"));
+        Ok(())
+    }
+
     // MKCOL each level; 405/301/200 mean "already there"
     pub async fn mkdirp(&self, rel_dir: &str) -> Result<(), String> {
         let mut cur = String::new();

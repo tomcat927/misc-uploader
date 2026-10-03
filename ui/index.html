@@ -59,11 +59,39 @@
         <p class="hint">填 OpenList 的地址即可(不填 /dav 后缀):软件自动使用它的
           <b>WebDAV 接口(/dav)</b>上传文件、<b>API</b> 列举目录。账号 = 该 OpenList 上的用户,建议使用单独创建的低权限账号。更改失焦后自动保存。</p>
         <label class="field">用户名 <input id="cfg-user" autocomplete="off" /></label>
-        <label class="field">密码 <input id="cfg-pass" type="password" placeholder="留空 = 不修改" /></label>
+        <label class="field">密码
+          <div class="pw-row">
+            <input id="cfg-pass" type="password" placeholder="留空 = 不修改" />
+            <button type="button" class="btn ghost pw-toggle" data-target="cfg-pass">显示</button>
+          </div>
+        </label>
         <div class="row">
           <button id="btn-connect" class="btn primary">连接</button>
           <span id="cfg-msg" class="msg"></span>
         </div>
+      </section>
+
+      <section class="card">
+        <h3>上传</h3>
+        <div class="num-row">
+          <label class="field">并发上传数(1-16)
+            <input id="up-concurrency" type="number" min="1" max="16" />
+          </label>
+          <label class="field">失败最大重试次数(0-10)
+            <input id="up-retries" type="number" min="0" max="10" />
+          </label>
+        </div>
+        <p class="hint">并发数与重试次数在下次点「连接」后生效。重试退避间隔固定为 2s / 8s / 30s。更改失焦后自动保存。</p>
+        <div class="row"><span id="up-msg" class="msg"></span></div>
+      </section>
+
+      <section class="card">
+        <h3>通用</h3>
+        <label class="check-row"><input type="checkbox" id="gen-autostart" /> 开机自启动(异常重启后自动恢复上传环境)</label>
+        <label class="check-row"><input type="checkbox" id="gen-silent" /> 静默启动(不显示主窗口,从托盘唤出;开机自启时始终静默)</label>
+        <label class="check-row"><input type="checkbox" id="gen-minimize" /> 关闭窗口时最小化到托盘(勾选后从托盘菜单「退出」才真正退出)</label>
+        <label class="check-row"><input type="checkbox" id="gen-checkupdate" /> 启动时自动检查更新</label>
+        <div class="row"><span id="gen-msg" class="msg"></span></div>
       </section>
 
       <section class="card">
@@ -79,7 +107,7 @@
 
       <section class="card">
         <h3>远程日志</h3>
-        <label class="radio"><input type="checkbox" id="ls-enabled" /> 启用:运行日志定期上传(北京时间,每 5 分钟)</label>
+        <label class="check-row"><input type="checkbox" id="ls-enabled" /> 启用:运行日志定期上传(北京时间)</label>
         <p class="hint">上传目标是一个 WebDAV 账号(可以是同一台 OpenList 的专用低权限账号)。日志按天一个文件落在下方目录
           (相对该账号可见的根路径),不经过加密归档。更改失焦后自动保存。</p>
         <label class="field">日志服务器地址
@@ -89,7 +117,15 @@
           <input id="ls-dir" placeholder="本地磁盘/misc-uploader/logs" />
         </label>
         <label class="field">账号 <input id="cfg-ls-user" autocomplete="off" /></label>
-        <label class="field">密码 <input id="cfg-ls-pass" type="password" placeholder="留空 = 不修改" /></label>
+        <label class="field">密码
+          <div class="pw-row">
+            <input id="cfg-ls-pass" type="password" placeholder="留空 = 不修改" />
+            <button type="button" class="btn ghost pw-toggle" data-target="cfg-ls-pass">显示</button>
+          </div>
+        </label>
+        <label class="field">上传间隔(分钟,1-1440)
+          <input id="ls-interval" type="number" min="1" max="1440" />
+        </label>
         <div class="row">
           <button id="btn-ls-test" class="btn ghost">测试日志通道</button>
           <button id="btn-logdir" class="btn ghost">打开本地日志文件夹</button>

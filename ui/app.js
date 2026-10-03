@@ -25,6 +25,15 @@ async function openSettings() {
   $("cfg-pass").value = s.has_password ? "********" : "";
   $("cfg-pass").placeholder = s.has_password ? "留空 = 不修改" : "password";
   setMsg("cfg-msg", "");
+  try {
+    const [up, gen] = await Promise.all([invoke("get_upload_prefs"), invoke("get_general_prefs")]);
+    $("up-concurrency").value = up.concurrency;
+    $("up-retries").value = up.max_retries;
+    $("gen-autostart").checked = gen.autostart;
+    $("gen-silent").checked = gen.silent_start;
+    $("gen-minimize").checked = gen.minimize_on_close;
+    $("gen-checkupdate").checked = gen.check_update_on_start;
+  } catch (e) { console.warn(e); }
   try { await loadLogSync(); } catch (e) { console.warn(e); }
   showView("settings");
 }
@@ -203,6 +212,7 @@ async function loadLogSync() {
   $("cfg-ls-pass").value = ls.password; // get_log_sync 掩码返回 "********",空 = 未设置
   $("cfg-ls-pass").placeholder = ls.password ? "留空 = 不修改" : "password";
   $("ls-dir").value = ls.remote_dir || "";
+  $("ls-interval").value = ls.sync_interval_minutes || 5;
   setMsg("ls-msg", ls.enabled ? "已启用" : "已关闭", ls.enabled ? "ok" : "");
 }
 
@@ -215,13 +225,54 @@ async function autoSaveLogSync() {
       username: $("cfg-ls-user").value.trim(),
       password: $("cfg-ls-pass").value,
       remoteDir: $("ls-dir").value.trim(),
+      syncIntervalMinutes: parseInt($("ls-interval").value) || 5,
     });
     setMsg("ls-msg", "已自动保存 ✓", "ok");
   } catch (e) {
     setMsg("ls-msg", e, "err");
   }
 }
-["ls-url", "ls-dir", "cfg-ls-user", "cfg-ls-pass", "ls-enabled"].forEach(id => $(id).addEventListener("change", autoSaveLogSync));
+["ls-url", "ls-dir", "cfg-ls-user", "cfg-ls-pass", "ls-interval", "ls-enabled"].forEach(id => $(id).addEventListener("change", autoSaveLogSync));
+
+// ---------- 上传偏好自动保存 ----------
+async function saveUploadPrefs() {
+  try {
+    await invoke("set_upload_prefs", {
+      concurrency: parseInt($("up-concurrency").value) || 3,
+      maxRetries: parseInt($("up-retries").value) || 3,
+    });
+    setMsg("up-msg", "已自动保存 ✓(并发数下次「连接」后生效)", "ok");
+  } catch (e) {
+    setMsg("up-msg", e, "err");
+  }
+}
+["up-concurrency", "up-retries"].forEach(id => $(id).addEventListener("change", saveUploadPrefs));
+
+// ---------- 通用偏好自动保存 ----------
+async function saveGeneralPrefs() {
+  try {
+    await invoke("set_general_prefs", {
+      autostart: $("gen-autostart").checked,
+      silentStart: $("gen-silent").checked,
+      minimizeOnClose: $("gen-minimize").checked,
+      checkUpdateOnStart: $("gen-checkupdate").checked,
+    });
+    setMsg("gen-msg", "已自动保存 ✓", "ok");
+  } catch (e) {
+    setMsg("gen-msg", e, "err");
+  }
+}
+["gen-autostart", "gen-silent", "gen-minimize", "gen-checkupdate"].forEach(id => $(id).addEventListener("change", saveGeneralPrefs));
+
+// ---------- 密码框显示/隐藏 ----------
+document.querySelectorAll(".pw-toggle").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const input = $(btn.dataset.target);
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.textContent = show ? "隐藏" : "显示";
+  });
+});
 // 密码框掩码占位:聚焦全选,输入即替换;清空后保存 = 沿用已存密码(后端以 "********" 为哨兵)
 ["cfg-pass", "cfg-ls-pass"].forEach(id => $(id).addEventListener("focus", e => e.target.select()));
 
@@ -287,4 +338,12 @@ function escapeHtml(s) {
     if (bootConnectErr) setMsg("cfg-msg", "自动连接失败: " + bootConnectErr, "err");
   }
   renderQueue(await invoke("get_queue"));
+  // 启动时自动检查更新(可在通用设置关闭)
+  try {
+    const g = await invoke("get_general_prefs");
+    if (g.check_update_on_start) {
+      const u = await invoke("check_update").catch(() => null);
+      if (u && u.available) setMsg("update-msg", `发现新版本 v${u.version},点「检查更新」安装`, "warn");
+    }
+  } catch (e) { console.warn(e); }
 })();

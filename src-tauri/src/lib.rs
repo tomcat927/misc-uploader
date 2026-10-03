@@ -35,10 +35,62 @@ pub struct LogSyncConfig {
     /// 存放目录(WebDAV 相对路径,相对 logger 账号 base_path),设置页可改
     #[serde(default = "default_remote_dir")]
     pub remote_dir: String,
+    /// 定期上传间隔(分钟),设置页可改
+    #[serde(default = "default_sync_interval")]
+    pub sync_interval_minutes: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UploadPrefs {
+    #[serde(default = "default_concurrency")]
+    pub concurrency: u32,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+}
+
+impl Default for UploadPrefs {
+    fn default() -> Self {
+        UploadPrefs { concurrency: default_concurrency(), max_retries: default_max_retries() }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GeneralPrefs {
+    #[serde(default)]
+    pub autostart: bool,
+    #[serde(default)]
+    pub silent_start: bool,
+    #[serde(default = "default_true")]
+    pub minimize_on_close: bool,
+    #[serde(default = "default_true")]
+    pub check_update_on_start: bool,
+}
+
+impl Default for GeneralPrefs {
+    fn default() -> Self {
+        GeneralPrefs {
+            autostart: false,
+            silent_start: false,
+            minimize_on_close: default_true(),
+            check_update_on_start: default_true(),
+        }
+    }
 }
 
 fn default_remote_dir() -> String {
     "本地磁盘/misc-uploader/logs".into()
+}
+fn default_sync_interval() -> u32 {
+    5
+}
+fn default_concurrency() -> u32 {
+    3
+}
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -48,6 +100,10 @@ pub struct Config {
     pub password: String,
     #[serde(default)]
     pub log_sync: LogSyncConfig,
+    #[serde(default)]
+    pub upload: UploadPrefs,
+    #[serde(default)]
+    pub general: GeneralPrefs,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,6 +154,8 @@ fn save_settings(
         username,
         password: if password.is_empty() || password == "********" { cur.password } else { password },
         log_sync: cur.log_sync,
+        upload: cur.upload,
+        general: cur.general,
     };
     // 空 url/用户名的保存一律拒绝且不落盘,防止把已存配置覆盖成空(密码/日志同步设置同理不丢)
     if cfg.base_url.is_empty() || cfg.username.is_empty() {
@@ -142,7 +200,11 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
     let q = Arc::new(Queue::new(history_path));
     *state.client.lock().unwrap() = Some(client.clone());
     *state.queue.lock().unwrap() = Some(q.clone());
-    for _ in 0..queue::CONCURRENCY {
+    let (conc, max_retries) = {
+        let cfg = state.config.lock().unwrap();
+        (cfg.upload.concurrency.max(1) as usize, cfg.upload.max_retries)
+    };
+    for _ in 0..conc {
         let app = app.clone();
         let client = client.clone();
         let q = q.clone();
@@ -157,15 +219,20 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
             }
         });
     }
-    // remote log sync: push local log files every 5 minutes (only if enabled in settings)
+    // remote log sync: push local log files at a user-configured interval (only if enabled in settings)
     {
         let app2 = app.clone();
         tauri::async_runtime::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                let state: State<AppState> = app2.state();
-                let ls = state.config.lock().unwrap().log_sync.clone();
-                drop(state);
+                let interval_min = {
+                    let st: State<AppState> = app2.state();
+                    st.config.lock().unwrap().log_sync.sync_interval_minutes.max(1)
+                };
+                tokio::time::sleep(std::time::Duration::from_secs(interval_min as u64 * 60)).await;
+                let ls = {
+                    let st: State<AppState> = app2.state();
+                    st.config.lock().unwrap().log_sync.clone()
+                };
                 if !ls.enabled || ls.base_url.is_empty() || ls.username.is_empty() || ls.password.is_empty() || ls.remote_dir.is_empty() {
                     continue;
                 }
@@ -175,7 +242,10 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
             }
         });
     }
-    log::log(&format!("session started (user {})", state.config.lock().unwrap().username));
+    log::log(&format!(
+        "session started (user {}, concurrency {conc}, max retries {max_retries})",
+        state.config.lock().unwrap().username
+    ));
     emit_queue(app);
 }
 
@@ -230,7 +300,7 @@ fn get_log_sync(state: State<AppState>) -> LogSyncConfig {
 }
 
 #[tauri::command]
-fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, username: String, password: String, remote_dir: String) {
+fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, username: String, password: String, remote_dir: String, sync_interval_minutes: u32) {
     let mut cfg = state.config.lock().unwrap();
     let cur = cfg.log_sync.clone();
     cfg.log_sync = LogSyncConfig {
@@ -239,11 +309,76 @@ fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, usernam
         username,
         password: if password.is_empty() || password == "********" { cur.password } else { password },
         remote_dir: remote_dir.trim().trim_matches('/').to_string(),
+        sync_interval_minutes: sync_interval_minutes.clamp(1, 1440),
     };
     if let Some(p) = state.config_path.lock().unwrap().clone() {
         let _ = std::fs::write(&p, serde_json::to_vec_pretty(&*cfg).unwrap_or_default());
     }
     log::log(&format!("log sync config saved (enabled={enabled}, target {})", cfg.log_sync.base_url));
+}
+
+fn persist_config(state: &State<AppState>, cfg: &Config) {
+    if let Some(p) = state.config_path.lock().unwrap().clone() {
+        let _ = std::fs::create_dir_all(p.parent().unwrap());
+        let _ = std::fs::write(&p, serde_json::to_vec_pretty(cfg).unwrap_or_default());
+    }
+}
+
+#[tauri::command]
+fn get_upload_prefs(state: State<AppState>) -> UploadPrefs {
+    state.config.lock().unwrap().upload.clone()
+}
+
+#[tauri::command]
+fn set_upload_prefs(state: State<AppState>, concurrency: u32, max_retries: u32) -> UploadPrefs {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.upload.concurrency = concurrency.clamp(1, 16);
+    cfg.upload.max_retries = max_retries.min(10);
+    let prefs = cfg.upload.clone();
+    persist_config(&state, &cfg);
+    drop(cfg);
+    log::log(&format!(
+        "upload prefs saved (concurrency {}, max retries {})",
+        prefs.concurrency, prefs.max_retries
+    ));
+    prefs
+}
+
+#[tauri::command]
+fn get_general_prefs(state: State<AppState>) -> GeneralPrefs {
+    state.config.lock().unwrap().general.clone()
+}
+
+#[tauri::command]
+fn set_general_prefs(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    autostart: bool,
+    silent_start: bool,
+    minimize_on_close: bool,
+    check_update_on_start: bool,
+) -> Result<GeneralPrefs, String> {
+    {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.general = GeneralPrefs { autostart, silent_start, minimize_on_close, check_update_on_start };
+        persist_config(&state, &cfg);
+    }
+    // 自启注册立即生效;先 disable 再 enable 强制刷新,防止升级后注册表残留旧 exe 路径(照抄 openlist-uploader)
+    use tauri_plugin_autostart::ManagerExt;
+    let m = app.autolaunch();
+    let enabled_now = m.is_enabled().unwrap_or(false);
+    if autostart {
+        if enabled_now {
+            let _ = m.disable();
+        }
+        m.enable().map_err(|e| format!("开机自启注册失败: {e}"))?;
+        log::log("autostart enabled");
+    } else if enabled_now {
+        let _ = m.disable();
+        log::log("autostart disabled");
+    }
+    let prefs = state.config.lock().unwrap().general.clone();
+    Ok(prefs)
 }
 
 #[tauri::command]
@@ -453,6 +588,12 @@ async fn process_item(
             q.history_put(sha, queue::HistoryEntry { rel: rel.clone(), time: queue::now_ms() });
             drop(g);
             log::log(&format!("upload done: {rel}"));
+            // 刷新目标目录缓存,触发 OpenList 增量索引(便于搜索新文件;尽力而为,失败不影响上传结果)
+            if !dir.is_empty() && dir != "." {
+                if let Err(e) = client.refresh_dir(&dir).await {
+                    log::log(&format!("refresh dir {dir} failed (不影响上传): {e}"));
+                }
+            }
         }
         Err(e) => {
             log::log(&format!("upload error {rel}: {e}"));
@@ -463,11 +604,15 @@ async fn process_item(
 }
 
 fn retry_or_fail(app: &tauri::AppHandle, item: &queue::ArcItem, err: String) {
+    let max_retries = {
+        let st: State<AppState> = app.state();
+        st.config.lock().unwrap().upload.max_retries
+    };
     let (tries, state) = {
         let mut g = item.lock().unwrap();
         g.tries += 1;
         g.error = Some(err);
-        if g.tries > queue::RETRIES {
+        if g.tries > max_retries {
             g.state = "failed".into();
         } else {
             g.state = "cooldown".into();
@@ -475,7 +620,8 @@ fn retry_or_fail(app: &tauri::AppHandle, item: &queue::ArcItem, err: String) {
         (g.tries, g.state.clone())
     };
     if state == "cooldown" {
-        let delay = queue::RETRY_DELAYS_MS[(tries - 1).min(2) as usize];
+        let last = queue::RETRY_DELAYS_MS.len() as u32 - 1;
+        let delay = queue::RETRY_DELAYS_MS[(tries - 1).min(last) as usize];
         let item = item.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
@@ -528,6 +674,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         .setup(|app| {
             let dir = app
                 .path()
@@ -544,6 +694,8 @@ pub fn run() {
                     username: String::new(),
                     password: String::new(),
                     log_sync: Default::default(),
+                    upload: Default::default(),
+                    general: Default::default(),
                 });
             app.manage(AppState {
                 client: Mutex::new(None),
@@ -553,7 +705,80 @@ pub fn run() {
                 target: Mutex::new(String::new()),
                 config_path: Mutex::new(Some(cfg_path)),
             });
+            // 开机自启注册与配置同步(先 disable 再 enable 强制刷新,防注册表残留旧 exe 路径)
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let want = { app.state::<AppState>().config.lock().unwrap().general.autostart };
+                let m = app.autolaunch();
+                let is = m.is_enabled().unwrap_or(false);
+                if want && !is {
+                    let _ = m.enable();
+                }
+                if !want && is {
+                    let _ = m.disable();
+                }
+            }
+            // 静默启动:配置勾选,或以开机自启参数(--autostart)启动时隐藏主窗口,从托盘唤出
+            let autostarted = std::env::args().any(|arg| arg == "--autostart");
+            let silent = autostarted
+                || { app.state::<AppState>().config.lock().unwrap().general.silent_start };
+            if silent {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
+            log::log(&format!("startup: silent={silent} autostarted={autostarted}"));
+            // 托盘:左键/菜单唤出主窗口;关闭行为见 on_window_event(minimize_on_close)
+            {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+                let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+                let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show, &quit])?;
+                TrayIconBuilder::with_id("main-tray")
+                    .icon(app.default_window_icon().expect("app icon").clone())
+                    .tooltip("misc-uploader")
+                    .menu(&menu)
+                    .on_menu_event(|handle, event| match event.id.as_ref() {
+                        "show" => {
+                            if let Some(w) = handle.get_webview_window("main") {
+                                let _ = w.unminimize();
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "quit" => handle.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            if let Some(w) = tray.app_handle().get_webview_window("main") {
+                                let _ = w.unminimize();
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let minimize = {
+                    let st = window.app_handle().state::<AppState>();
+                    st.config.lock().unwrap().general.minimize_on_close
+                };
+                if minimize {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             load_settings,
@@ -567,6 +792,10 @@ pub fn run() {
             get_log_sync,
             set_log_sync,
             test_log_sync,
+            get_upload_prefs,
+            set_upload_prefs,
+            get_general_prefs,
+            set_general_prefs,
             open_log_dir,
             check_update,
             install_update

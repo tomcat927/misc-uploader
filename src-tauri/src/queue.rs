@@ -1,13 +1,12 @@
 // queue.rs — upload queue state: SHA-256 content dedupe, history.json, helpers.
 // Dedupe is content-level (user decision): same hash skips regardless of target folder.
 // History covers only files uploaded by this app.
+// 并发数/最大重试次数是用户设置(lib.rs UploadPrefs),RETRY_DELAYS_MS 为固定退避曲线。
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub const CONCURRENCY: usize = 3;
-pub const RETRIES: u32 = 3;
 pub const RETRY_DELAYS_MS: [u64; 3] = [2000, 8000, 30000];
 pub const HISTORY_MAX: usize = 10000;
 
