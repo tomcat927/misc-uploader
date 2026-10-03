@@ -507,9 +507,12 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
         .ok_or("no update available")?;
     log::log(&format!("downloading update {}", update.version));
     let emit_app = app.clone();
+    // 插件回调的 chunk 是「本次分片大小」而非累计下载量,必须累加,否则进度条每次都从零附近抖动
+    let downloaded = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let mut on_chunk = move |chunk: usize, total: Option<u64>| {
+        let cur = downloaded.fetch_add(chunk as u64, std::sync::atomic::Ordering::Relaxed) + chunk as u64;
         let _ = emit_app.emit("update-progress", serde_json::json!({
-            "downloaded": chunk, "total": total,
+            "downloaded": cur, "total": total,
         }));
     };
     update
