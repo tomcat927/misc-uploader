@@ -226,12 +226,14 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
             loop {
                 let interval_min = {
                     let st: State<AppState> = app2.state();
-                    st.config.lock().unwrap().log_sync.sync_interval_minutes.max(1)
+                    let cfg = st.config.lock().unwrap();
+                    cfg.log_sync.sync_interval_minutes.max(1)
                 };
                 tokio::time::sleep(std::time::Duration::from_secs(interval_min as u64 * 60)).await;
                 let ls = {
                     let st: State<AppState> = app2.state();
-                    st.config.lock().unwrap().log_sync.clone()
+                    let cfg = st.config.lock().unwrap();
+                    cfg.log_sync.clone()
                 };
                 if !ls.enabled || ls.base_url.is_empty() || ls.username.is_empty() || ls.password.is_empty() || ls.remote_dir.is_empty() {
                     continue;
@@ -606,7 +608,8 @@ async fn process_item(
 fn retry_or_fail(app: &tauri::AppHandle, item: &queue::ArcItem, err: String) {
     let max_retries = {
         let st: State<AppState> = app.state();
-        st.config.lock().unwrap().upload.max_retries
+        let cfg = st.config.lock().unwrap();
+        cfg.upload.max_retries
     };
     let (tries, state) = {
         let mut g = item.lock().unwrap();
@@ -708,7 +711,11 @@ pub fn run() {
             // 开机自启注册与配置同步(先 disable 再 enable 强制刷新,防注册表残留旧 exe 路径)
             {
                 use tauri_plugin_autostart::ManagerExt;
-                let want = { app.state::<AppState>().config.lock().unwrap().general.autostart };
+                let want = {
+                    let st = app.state::<AppState>();
+                    let cfg = st.config.lock().unwrap();
+                    cfg.general.autostart
+                };
                 let m = app.autolaunch();
                 let is = m.is_enabled().unwrap_or(false);
                 if want && !is {
@@ -721,7 +728,11 @@ pub fn run() {
             // 静默启动:配置勾选,或以开机自启参数(--autostart)启动时隐藏主窗口,从托盘唤出
             let autostarted = std::env::args().any(|arg| arg == "--autostart");
             let silent = autostarted
-                || { app.state::<AppState>().config.lock().unwrap().general.silent_start };
+                || {
+                    let st = app.state::<AppState>();
+                    let cfg = st.config.lock().unwrap();
+                    cfg.general.silent_start
+                };
             if silent {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
@@ -772,7 +783,8 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let minimize = {
                     let st = window.app_handle().state::<AppState>();
-                    st.config.lock().unwrap().general.minimize_on_close
+                    let cfg = st.config.lock().unwrap();
+                    cfg.general.minimize_on_close
                 };
                 if minimize {
                     api.prevent_close();
