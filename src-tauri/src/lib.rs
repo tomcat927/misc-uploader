@@ -598,8 +598,9 @@ async fn process_item(
             return;
         }
     }
-    let uploaded = client.put_file(&rel, &file_path).await;
-    match uploaded {
+    let result = client.put_file(&rel, &file_path).await;
+    let uploaded_ok = result.is_ok();
+    match result {
         Ok(_) => {
             {
                 let mut g = item.lock().unwrap();
@@ -616,7 +617,7 @@ async fn process_item(
     }
     // 刷新目标目录缓存,触发 OpenList 增量索引(便于搜索新文件;尽力而为,失败不影响上传结果)
     // 注意:必须在 MutexGuard 作用域之外 await(guard 非 Send)
-    if uploaded.is_ok() && !dir.is_empty() && dir != "." {
+    if uploaded_ok && !dir.is_empty() && dir != "." {
         if let Err(e) = client.refresh_dir(&dir).await {
             log::log(&format!("refresh dir {dir} failed (不影响上传): {e}"));
         }
