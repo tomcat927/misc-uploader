@@ -45,10 +45,24 @@
         <div class="queue-bar">
           <span id="queue-stats" class="dim">队列空闲</span>
           <span class="spacer"></span>
+          <button id="btn-history" class="btn ghost" title="查看跨会话的上传历史">📜 历史</button>
+          <button id="btn-qorder" class="btn ghost" title="切换已完成记录的新旧排序">↓ 新在前</button>
           <button id="btn-retry" class="btn ghost">重试失败</button>
           <button id="btn-clear" class="btn ghost">清空已完成</button>
         </div>
         <div id="queue"></div>
+      </div>
+
+      <div id="history-pane" class="card hidden">
+        <div class="queue-bar">
+          <span>📜 上传历史</span>
+          <span id="history-count" class="dim"></span>
+          <span class="spacer"></span>
+          <button id="btn-history-refresh" class="btn ghost" title="重新加载">⟳</button>
+          <button id="btn-history-close" class="btn ghost" title="收起">收起</button>
+        </div>
+        <div id="history-list"></div>
+        <div class="history-more"><button id="btn-history-more" class="btn ghost hidden">加载更多</button></div>
       </div>
     </section>
   </div>

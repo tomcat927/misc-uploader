@@ -143,6 +143,28 @@ header {
 }
 .q-path:empty { display: none; }
 .q-arrow { color: var(--accent); }
+.q-group {
+  padding: 4px 12px; font-size: 11px; color: var(--dim);
+  background: rgba(255, 255, 255, .02); border-bottom: 1px solid #1d2530;
+  letter-spacing: .3px; user-select: none;
+}
+
+/* ---------- 上传历史 ---------- */
+#history-pane {
+  flex: 0 0 auto; display: flex; flex-direction: column;
+  max-height: 45%; min-height: 140px;
+}
+#history-pane.hidden { display: none; }
+#history-list { flex: 1; overflow-y: auto; }
+.h-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 12px; border-bottom: 1px solid #1d2530; font-size: 12px;
+}
+.h-row:last-child { border-bottom: none; }
+.h-name { flex: 0 1 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-dir { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.h-time { flex-shrink: 0; color: var(--dim); width: 112px; text-align: right; }
+.history-more { padding: 8px 12px; border-top: 1px solid var(--border); text-align: center; }
 
 .state-pill {
   flex-shrink: 0; font-size: 11px; padding: 1px 9px; border-radius: 999px;
@@ -193,3 +215,6 @@ header {
   background: linear-gradient(90deg, var(--accent), #7aa8ff);
   transition: width .2s;
 }
+
+/* ---------- utils(置底覆盖同权重的 display 规则) ---------- */
+.hidden { display: none; }

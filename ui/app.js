@@ -227,38 +227,135 @@ function fmtSize(n) {
   return n + "B";
 }
 
+// 分组排序:进行中(hashing/pending/processing/uploading/cooldown)按入队序置顶稳定;
+// 已完成(done/skipped/failed)按完成时间排,默认最新在前,可切换。切换只影响已完成区块。
+const QUEUE_ACTIVE = ["hashing", "pending", "processing", "uploading", "cooldown"];
+let queueAsc = localStorage.getItem("misc-uploader.queue-asc") === "1";
+let lastQueueItems = [];
+
+function groupHead(text) {
+  const h = document.createElement("div");
+  h.className = "q-group";
+  h.textContent = text;
+  return h;
+}
+
 function renderQueue(items) {
+  lastQueueItems = items;
   const q = $("queue");
   q.innerHTML = "";
-  for (const it of items) {
-    const row = document.createElement("div");
-    row.className = "q-row";
-    const err = it.error ? `<span class="q-err" title="${escapeHtml(it.error)}">${escapeHtml(it.error)}</span>` : "";
-    const pct = it.size ? Math.min(100, Math.round(100 * (it.uploaded || 0) / it.size)) : 0;
-    const bar = it.state === "uploading" ? `<div class="q-bar"><div style="width:${pct}%"></div></div>` : "";
-    // rel 一旦确定(process 起步时)就显示去向,不必等到 done
-    const dest = it.rel ? ` <span class="q-arrow">→</span> /misc/${escapeHtml(it.rel)}` : "";
-    const pathTitle = escapeHtml(it.file_path || "") + (it.rel ? ` → /misc/${escapeHtml(it.rel)}` : "");
-    row.innerHTML = `
-      <div class="q-top">
-        <span class="q-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>
-        <span class="q-size">${fmtSize(it.size)}</span>
-        ${bar}
-        <span class="state-pill ${it.state}">${it.state}</span>
-        ${err}
-      </div>
-      <div class="q-path" title="${pathTitle}">${escapeHtml(it.file_path || "")}${dest}</div>`;
-    q.appendChild(row);
+  const active = items.filter(it => QUEUE_ACTIVE.includes(it.state));
+  const finished = items
+    .filter(it => !QUEUE_ACTIVE.includes(it.state))
+    .sort((a, b) =>
+      queueAsc ? (a.finished_at || 0) - (b.finished_at || 0) : (b.finished_at || 0) - (a.finished_at || 0)
+    );
+
+  const addRows = list => {
+    for (const it of list) {
+      const row = document.createElement("div");
+      row.className = "q-row";
+      const err = it.error ? `<span class="q-err" title="${escapeHtml(it.error)}">${escapeHtml(it.error)}</span>` : "";
+      const pct = it.size ? Math.min(100, Math.round(100 * (it.uploaded || 0) / it.size)) : 0;
+      const bar = it.state === "uploading" ? `<div class="q-bar"><div style="width:${pct}%"></div></div>` : "";
+      // rel 一旦确定(process 起步时)就显示去向,不必等到 done
+      const dest = it.rel ? ` <span class="q-arrow">→</span> /misc/${escapeHtml(it.rel)}` : "";
+      const pathTitle = escapeHtml(it.file_path || "") + (it.rel ? ` → /misc/${escapeHtml(it.rel)}` : "");
+      row.innerHTML = `
+        <div class="q-top">
+          <span class="q-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>
+          <span class="q-size">${fmtSize(it.size)}</span>
+          ${bar}
+          <span class="state-pill ${it.state}">${it.state}</span>
+          ${err}
+        </div>
+        <div class="q-path" title="${pathTitle}">${escapeHtml(it.file_path || "")}${dest}</div>`;
+      q.appendChild(row);
+    }
+  };
+
+  if (active.length) {
+    q.appendChild(groupHead(`进行中 ${active.length} · 按入队顺序`));
+    addRows(active);
   }
+  if (finished.length) {
+    q.appendChild(groupHead(`已完成 ${finished.length} · ${queueAsc ? "旧在前 ↑" : "新在前 ↓"}`));
+    addRows(finished);
+  }
+
   const counts = {};
   for (const it of items) counts[it.state] = (counts[it.state] || 0) + 1;
-  const active = ["hashing", "pending", "processing", "uploading", "cooldown"].reduce((a, k) => a + (counts[k] || 0), 0);
+  const act = QUEUE_ACTIVE.reduce((a, k) => a + (counts[k] || 0), 0);
   $("queue-stats").textContent = items.length
-    ? `共 ${items.length} | 进行 ${active} | 完成 ${counts.done || 0} | 跳过 ${counts.skipped || 0} | 失败 ${counts.failed || 0}`
+    ? `共 ${items.length} | 进行 ${act} | 完成 ${counts.done || 0} | 跳过 ${counts.skipped || 0} | 失败 ${counts.failed || 0}`
     : "队列空闲";
 }
 
+$("btn-qorder").textContent = queueAsc ? "↑ 旧在前" : "↓ 新在前";
+$("btn-qorder").addEventListener("click", () => {
+  queueAsc = !queueAsc;
+  localStorage.setItem("misc-uploader.queue-asc", queueAsc ? "1" : "0");
+  $("btn-qorder").textContent = queueAsc ? "↑ 旧在前" : "↓ 新在前";
+  renderQueue(lastQueueItems);
+});
+
 listen("queue-updated", e => renderQueue(e.payload));
+
+// ---------- 上传历史(跨会话,读 history.json) ----------
+const HISTORY_PAGE = 200;
+let historyOffset = 0;
+let historyTotal = 0;
+let historyLoading = false;
+
+function fmtTime(ms) {
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function historyRowEl(it) {
+  const row = document.createElement("div");
+  row.className = "h-row";
+  const name = it.rel.split("/").pop();
+  const dir = it.rel.slice(0, it.rel.length - name.length);
+  row.title = it.rel;
+  row.innerHTML = `
+    <span class="h-name">${escapeHtml(name)}</span>
+    <span class="h-dir">${escapeHtml(dir)}</span>
+    <span class="h-time">${escapeHtml(fmtTime(it.time))}</span>`;
+  return row;
+}
+
+async function loadHistory(reset) {
+  if (historyLoading) return;
+  historyLoading = true;
+  try {
+    if (reset) {
+      historyOffset = 0;
+      $("history-list").innerHTML = "";
+    }
+    const r = await invoke("get_history", { offset: historyOffset, limit: HISTORY_PAGE });
+    historyTotal = r.total;
+    for (const it of r.items) $("history-list").appendChild(historyRowEl(it));
+    historyOffset += r.items.length;
+    $("history-count").textContent = `共 ${historyTotal} 条 · 按内容去重,同一内容记最新位置`;
+    $("btn-history-more").classList.toggle("hidden", historyOffset >= historyTotal);
+  } catch (e) {
+    $("history-count").textContent = "加载失败: " + e;
+  } finally {
+    historyLoading = false;
+  }
+}
+
+$("btn-history").addEventListener("click", async () => {
+  const pane = $("history-pane");
+  const opening = pane.classList.contains("hidden");
+  pane.classList.toggle("hidden", !opening);
+  if (opening) await loadHistory(true);
+});
+$("btn-history-close").addEventListener("click", () => $("history-pane").classList.add("hidden"));
+$("btn-history-refresh").addEventListener("click", () => loadHistory(true));
+$("btn-history-more").addEventListener("click", () => loadHistory(false));
 
 // ---------- hot update ----------
 async function checkUpdate() {

@@ -322,6 +322,35 @@ fn clear_finished(state: State<AppState>) {
     }
 }
 
+// 上传历史面板:跨会话记录(history.json,按内容去重,每条 = 远程路径 + 完成时间)。
+// 已连接读内存(每次 put 即落盘,与磁盘等价),未连接直接读盘;完成时间倒序分页。
+#[tauri::command]
+fn get_history(state: State<AppState>, offset: usize, limit: usize) -> serde_json::Value {
+    let hist_path = state
+        .config_path
+        .lock()
+        .unwrap()
+        .clone()
+        .map(|p| p.parent().unwrap().join("history.json"));
+    let rows = {
+        let qg = state.queue.lock().unwrap();
+        match qg.as_ref() {
+            Some(q) => q.history_rows(),
+            None => hist_path
+                .map(|p| queue::load_history_rows(&p))
+                .unwrap_or_default(),
+        }
+    };
+    let total = rows.len();
+    let items: Vec<queue::HistoryRow> = rows
+        .into_iter()
+        .skip(offset)
+        .take(limit.clamp(1, 1000))
+        .map(|(rel, time)| queue::HistoryRow { rel, time })
+        .collect();
+    serde_json::json!({ "total": total, "items": items })
+}
+
 #[tauri::command]
 fn get_log_sync(state: State<AppState>) -> LogSyncConfig {
     let mut ls = state.config.lock().unwrap().log_sync.clone();
@@ -582,6 +611,7 @@ async fn process_item(
             g.state = "skipped".into();
             g.rel = Some(seen.rel.clone());
             g.error = Some(format!("already in repo: {}", seen.rel));
+            g.finished_at = Some(queue::now_ms());
             log::log(&format!("skip {}: {}", g.name, seen.rel));
             drop(g);
             emit_queue(app);
@@ -629,6 +659,7 @@ async fn process_item(
             {
                 let mut g = item.lock().unwrap();
                 g.state = "done".into();
+                g.finished_at = Some(queue::now_ms());
                 let sha = g.sha.clone().unwrap_or_default();
                 q.history_put(sha, queue::HistoryEntry { rel: rel.clone(), time: queue::now_ms() });
             }
@@ -661,6 +692,7 @@ fn retry_or_fail(app: &tauri::AppHandle, item: &queue::ArcItem, err: String) {
         g.error = Some(err);
         if g.tries > max_retries {
             g.state = "failed".into();
+            g.finished_at = Some(queue::now_ms());
         } else {
             g.state = "cooldown".into();
         }
@@ -682,6 +714,7 @@ fn fail_item(item: &queue::ArcItem, err: String) {
     let mut g = item.lock().unwrap();
     g.state = "failed".into();
     g.error = Some(err);
+    g.finished_at = Some(queue::now_ms());
 }
 
 fn current_mode(app: &tauri::AppHandle) -> (String, String) {
@@ -847,6 +880,7 @@ pub fn run() {
             get_queue,
             retry_failed,
             clear_finished,
+            get_history,
             get_log_sync,
             set_log_sync,
             test_log_sync,

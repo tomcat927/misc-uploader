@@ -26,12 +26,27 @@ pub struct QueueItem {
     pub state: String, // hashing | pending | processing | uploading | done | failed | skipped
     pub tries: u32,
     pub error: Option<String>,
+    /// 完成/跳过/失败的打点时间(ms),前端「已完成」区块排序用
+    pub finished_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryEntry {
     pub rel: String,
     pub time: u64,
+}
+
+/// 历史面板行(跨会话上传记录:远程路径 + 完成时间;按内容去重,同一内容记最新位置)
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryRow {
+    pub rel: String,
+    pub time: u64,
+}
+
+fn sort_history_rows(mut rows: Vec<(String, u64)>) -> Vec<(String, u64)> {
+    // 完成时间倒序;同毫秒按路径稳定排序,保证分页确定
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    rows
 }
 
 pub struct Queue {
@@ -99,6 +114,7 @@ impl Queue {
                 state: "hashing".into(),
                 tries: 0,
                 error: None,
+                finished_at: None,
             })));
         }
     }
@@ -125,6 +141,7 @@ impl Queue {
                 g.tries = 0;
                 g.error = None;
                 g.sha = None;
+                g.finished_at = None; // 重新入队,回到「进行中」区块
             }
         }
     }
@@ -150,6 +167,12 @@ impl Queue {
         self.history.lock().unwrap().get(sha).cloned()
     }
 
+    // 内存历史按完成时间倒序(历史面板数据源;与磁盘同步落盘,两者等价)
+    pub fn history_rows(&self) -> Vec<(String, u64)> {
+        let hist = self.history.lock().unwrap();
+        sort_history_rows(hist.values().map(|e| (e.rel.clone(), e.time)).collect())
+    }
+
     pub fn history_put(&self, sha: String, entry: HistoryEntry) {
         {
             let mut hist = self.history.lock().unwrap();
@@ -168,5 +191,14 @@ impl Queue {
         }
         let hist = self.history.lock().unwrap();
         let _ = std::fs::write(&self.history_path, serde_json::to_vec(&*hist).unwrap_or_default());
+    }
+
+    // 未连接时(内存队列不存在)从磁盘读历史,历史面板跨会话可用
+    pub fn load_history_rows(path: &std::path::Path) -> Vec<(String, u64)> {
+        let map: HashMap<String, HistoryEntry> = match std::fs::read(path) {
+            Ok(b) => serde_json::from_slice(&b).unwrap_or_default(),
+            Err(_) => return Vec::new(),
+        };
+        sort_history_rows(map.into_values().map(|e| (e.rel, e.time)).collect())
     }
 }
