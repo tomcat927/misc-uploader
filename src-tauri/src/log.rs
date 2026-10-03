@@ -102,7 +102,8 @@ pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &st
     let absolute_dir = match client.me_base_path().await {
         Ok(b) => resolve_absolute(&b, remote_dir),
         Err(e) => {
-            log::log(&format!("resolve absolute log dir failed: {e}"));
+            // 注意:本文件即 log 模块,模块内自引用要写 log(...) 而非 log::log(...)(E0433)
+            log(&format!("resolve absolute log dir failed: {e}"));
             String::new()
         }
     };
