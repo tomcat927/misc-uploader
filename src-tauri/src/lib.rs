@@ -92,7 +92,18 @@ async fn save_settings(
         password: if password.is_empty() { cur.password } else { password },
         log_sync: cur.log_sync,
     };
-    let client = do_connect(&cfg).await?;
+    let client = match do_connect(&cfg).await {
+        Ok(c) => c,
+        Err(e) => {
+            // 连接失败也保留用户填的内容并落盘,否则重进设置页像被清空,用户以为保存丢失
+            if let Some(p) = state.config_path.lock().unwrap().clone() {
+                let _ = std::fs::create_dir_all(p.parent().unwrap());
+                let _ = std::fs::write(&p, serde_json::to_vec_pretty(&cfg).unwrap_or_default());
+            }
+            *state.config.lock().unwrap() = cfg;
+            return Err(e);
+        }
+    };
     if let Some(p) = state.config_path.lock().unwrap().clone() {
         let _ = std::fs::create_dir_all(p.parent().unwrap());
         let _ = std::fs::write(&p, serde_json::to_vec_pretty(&cfg).unwrap_or_default());
