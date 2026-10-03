@@ -20,7 +20,9 @@ body {
   background: radial-gradient(1200px 600px at 20% -10%, #172031 0%, var(--bg0) 55%);
   color: var(--text);
   display: flex; flex-direction: column;
-  user-select: none; overflow: hidden;
+  user-select: text; overflow: hidden;
+}
+button, .dir-node { user-select: none; }
 }
 
 /* ---------- header ---------- */

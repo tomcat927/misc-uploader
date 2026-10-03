@@ -101,7 +101,8 @@ async function renderTree() {
 
 // ---------- drag & drop visual ----------
 const dz = $("dropzone");
-window.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });
+const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+window.addEventListener("dragover", e => { e.preventDefault(); if (hasFiles(e)) dz.classList.add("drag"); });
 window.addEventListener("dragleave", e => { if (e.target === document.body) dz.classList.remove("drag"); });
 window.addEventListener("drop", e => { e.preventDefault(); dz.classList.remove("drag"); });
 
