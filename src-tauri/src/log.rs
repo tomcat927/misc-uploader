@@ -13,8 +13,6 @@ pub struct AppLog {
     version: String,
 }
 
-const APP_NAME: &str = "misc-uploader";
-
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

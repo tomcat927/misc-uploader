@@ -121,7 +121,7 @@ impl Queue {
 
     // atomically claim next work item; sets state to "processing"
     pub fn take_next(&self) -> Option<ArcItem> {
-        let mut items = self.items.lock().unwrap();
+        let items = self.items.lock().unwrap();
         for it in items.iter() {
             let mut g = it.lock().unwrap();
             if g.state == "hashing" || g.state == "pending" {
