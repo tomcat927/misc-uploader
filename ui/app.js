@@ -170,7 +170,7 @@ async function checkUpdate() {
   try {
     const r = await invoke("check_update");
     if (r.available) {
-      setMsg("update-msg", `发现新版本 ${r.version},下载中…`);
+      setMsg("update-msg", `发现新版本 ${r.version},准备下载…`);
       await invoke("install_update"); // downloads, installs, restarts
     } else {
       setMsg("update-msg", "已是最新版本", "ok");
@@ -182,10 +182,13 @@ async function checkUpdate() {
 
 listen("update-progress", e => {
   const { downloaded, total } = e.payload;
+  $("update-bar-wrap").classList.remove("hidden");
   if (total) {
-    setMsg("update-msg", `下载中 ${(downloaded / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`);
+    const pct = Math.min(100, Math.floor(100 * downloaded / total));
+    $("update-bar").style.width = pct + "%";
+    setMsg("update-msg", `下载中 ${pct}%(${(downloaded / 1048576).toFixed(2)} / ${(total / 1048576).toFixed(2)} MB)`);
   } else {
-    setMsg("update-msg", `下载中 ${(downloaded / 1048576).toFixed(1)} MB`);
+    $("update-msg").textContent = `下载中 ${(downloaded / 1048576).toFixed(2)} MB`;
   }
 });
 

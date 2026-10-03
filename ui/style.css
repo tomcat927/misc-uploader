@@ -150,3 +150,14 @@ header {
 .msg { font-size: 12px; color: var(--dim); }
 .msg.ok { color: var(--ok); }
 .msg.err { color: var(--err); }
+
+#update-bar-wrap {
+  margin-top: 10px; height: 8px; border-radius: 4px;
+  background: #10151c; border: 1px solid var(--border); overflow: hidden;
+}
+#update-bar-wrap.hidden { display: none; }
+#update-bar {
+  height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--accent), #7aa8ff);
+  transition: width .2s;
+}
