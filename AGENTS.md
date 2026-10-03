@@ -42,6 +42,7 @@ CI 按**中国时区**自动生成 `{年}.{月*100+日}.{时*100+分}`(如 `2026
 10. **`write!` 的 `{}` 对 u8 输出十进制数字不是字符**(曾把手写 base64 的前两位打成数字,所有 WebDAV 请求 401 而 REST 正常)——字节→字符必须 `as char`(手写 base64 已随 WebDAV 移除删除,教训本身通用)
 11. **MutexGuard 非 Send,不得跨 `.await`**——即使显式 `drop(g)` 也可能被生成器分析判为非 Send(spawn 的 Future 必须 Send);把 await 移到守卫作用域之外,守卫用块级作用域包裹
 12. **块尾表达式里的链式锁借用会 E0597**(`let x = { let st = app.state(); st.config.lock().unwrap().field };`)——锁的临时守卫存活期超过块内 `st` 的借用;把守卫绑定成具名局部变量再取字段
+13. **OpenList API 路径一律相对账号 base_path**(服务端 `JoinBasePath` 纯拼接、无前缀去重)——目录类设置字段(如日志 `remote_dir`)要填相对式 `misc-uploader/logs`,别照抄 openlist-uploader 的 `/本地磁盘/...` 绝对式(其账号 base=`/`;logger 账号 base=`/本地磁盘`)。曾因此双写成 `/本地磁盘/本地磁盘/...` 且静默成功长期未发现(详见 DESIGN.md「踩坑记录」)
 
 ## 凭据与安全规约(不可妥协)
 
