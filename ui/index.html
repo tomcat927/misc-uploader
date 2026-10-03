@@ -79,10 +79,20 @@
       </section>
 
       <section class="card">
-        <h3>诊断</h3>
-        <p class="hint">运行日志(北京时间)每 5 分钟自动同步,可在 OpenList 网页直接查看:</p>
-        <p id="log-target" class="logtarget">读取中…</p>
-        <button id="btn-logdir" class="btn">打开本地日志文件夹</button>
+        <h3>远程日志</h3>
+        <label class="radio"><input type="checkbox" id="ls-enabled" /> 启用:运行日志定期上传(北京时间,每 5 分钟)</label>
+        <p class="hint">上传目标是一个 WebDAV 账号(可以是同一台 OpenList 的专用低权限账号)。日志落在该账号可见的
+          <code class="chip">misc-uploader/logs/</code> 目录下,按天一个文件,不经过加密归档。</p>
+        <label class="field">日志服务器地址
+          <input id="ls-url" placeholder="https://your-openlist-host:5245" />
+        </label>
+        <label class="field">账号 <input id="cfg-ls-user" autocomplete="off" /></label>
+        <label class="field">密码 <input id="cfg-ls-pass" type="password" placeholder="留空 = 不修改" /></label>
+        <div class="row">
+          <button id="ls-save" class="btn">保存日志设置</button>
+          <button id="btn-logdir" class="btn ghost">打开本地日志文件夹</button>
+          <span id="ls-msg" class="msg"></span>
+        </div>
       </section>
     </div>
   </div>

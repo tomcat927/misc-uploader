@@ -23,10 +23,24 @@ pub struct AppState {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogSyncConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub base_url: String,
     pub username: String,
     pub password: String,
+    #[serde(default)]
+    pub log_sync: LogSyncConfig,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,12 +146,19 @@ fn start_session(app: &tauri::AppHandle, state: &State<AppState>, client: Arc<Op
             }
         });
     }
-    // remote log sync: push local log files every 5 minutes (dedicated logger account)
+    // remote log sync: push local log files every 5 minutes (only if enabled in settings)
     {
+        let app2 = app.clone();
         tauri::async_runtime::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                if let Err(e) = log::sync_remote().await {
+                let state: State<AppState> = app2.state();
+                let ls = state.config.lock().unwrap().log_sync.clone();
+                drop(state);
+                if !ls.enabled || ls.base_url.is_empty() || ls.username.is_empty() || ls.password.is_empty() {
+                    continue;
+                }
+                if let Err(e) = log::sync_remote(&ls.base_url, &ls.username, &ls.password).await {
                     log::log(&format!("log sync: {e}"));
                 }
             }
@@ -219,8 +240,26 @@ fn clear_finished(state: State<AppState>) {
 }
 
 #[tauri::command]
-fn log_remote_info() -> log::RemoteInfo {
-    log::remote_info()
+fn get_log_sync(state: State<AppState>) -> LogSyncConfig {
+    let mut ls = state.config.lock().unwrap().log_sync.clone();
+    if !ls.password.is_empty() { ls.password = "********".into(); }
+    ls
+}
+
+#[tauri::command]
+fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, username: String, password: String) {
+    let mut cfg = state.config.lock().unwrap();
+    let cur = cfg.log_sync.clone();
+    cfg.log_sync = LogSyncConfig {
+        enabled,
+        base_url: base_url.trim_end_matches('/').to_string(),
+        username,
+        password: if password.is_empty() || password == "********" { cur.password } else { password },
+    };
+    if let Some(p) = state.config_path.lock().unwrap().clone() {
+        let _ = std::fs::write(&p, serde_json::to_vec_pretty(&*cfg).unwrap_or_default());
+    }
+    log::log(&format!("log sync config saved (enabled={enabled}, target {})", cfg.log_sync.base_url));
 }
 
 #[tauri::command]
@@ -491,6 +530,7 @@ pub fn run() {
                     base_url: String::new(),
                     username: String::new(),
                     password: String::new(),
+                    log_sync: Default::default(),
                 });
             app.manage(AppState {
                 client: Mutex::new(None),
@@ -512,7 +552,8 @@ pub fn run() {
             get_queue,
             retry_failed,
             clear_finished,
-            log_remote_info,
+            get_log_sync,
+            set_log_sync,
             open_log_dir,
             check_update,
             install_update

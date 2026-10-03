@@ -25,6 +25,7 @@ async function openSettings() {
   $("cfg-pass").value = "";
   $("cfg-pass").placeholder = s.has_password ? "留空 = 不修改" : "password";
   setMsg("cfg-msg", "");
+  try { await loadLogSync(); } catch (e) { console.warn(e); }
   showView("settings");
 }
 
@@ -191,6 +192,33 @@ listen("update-progress", e => {
     $("update-msg").textContent = `下载中 ${(downloaded / 1048576).toFixed(2)} MB`;
   }
 });
+
+// ---------- remote log sync settings ----------
+async function loadLogSync() {
+  const ls = await invoke("get_log_sync");
+  $("ls-enabled").checked = ls.enabled;
+  $("ls-url").value = ls.base_url || "";
+  $("cfg-ls-user").value = ls.username || "";
+  $("cfg-ls-pass").value = "";
+  $("cfg-ls-pass").placeholder = ls.password ? "留空 = 不修改" : "password";
+  setMsg("ls-msg", ls.enabled ? "已启用" : "已关闭", ls.enabled ? "ok" : "");
+}
+
+async function saveLogSync() {
+  setMsg("ls-msg", "保存中…");
+  try {
+    await invoke("set_log_sync", {
+      enabled: $("ls-enabled").checked,
+      baseUrl: $("ls-url").value.trim(),
+      username: $("cfg-ls-user").value.trim(),
+      password: $("cfg-ls-pass").value,
+    });
+    setMsg("ls-msg", "已保存 ✓", "ok");
+  } catch (e) {
+    setMsg("ls-msg", "失败: " + e, "err");
+  }
+}
+$("ls-save").addEventListener("click", saveLogSync);
 
 // ---------- buttons ----------
 $("btn-settings").addEventListener("click", openSettings);

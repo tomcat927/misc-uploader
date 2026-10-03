@@ -4,11 +4,9 @@
 use crate::openlist::OpenListClient;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 static LOG: OnceLock<AppLog> = OnceLock::new();
-static SYNC_DISABLED_LOGGED: AtomicBool = AtomicBool::new(false);
 
 pub struct AppLog {
     dir: PathBuf,
@@ -76,41 +74,10 @@ pub fn log(msg: &str) {
     println!("{line}");
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct RemoteInfo {
-    pub enabled: bool,
-    pub base_url: Option<String>,
-    pub user: Option<String>,
-    pub remote_dir: String,
-}
-
-pub fn remote_info() -> RemoteInfo {
-    let (base, user) = (option_env!("LOG_BASE_URL"), option_env!("LOG_USER"));
-    RemoteInfo {
-        enabled: base.is_some() && user.is_some(),
-        base_url: base.map(String::from),
-        user: user.map(String::from),
-        remote_dir: REMOTE_DIR.into(),
-    }
-}
-
-// logger account client, credentials injected at compile time by CI (repo secrets).
-// built without them (local dev) -> remote sync disabled.
-fn logger_client() -> Option<OpenListClient> {
-    let base = option_env!("LOG_BASE_URL")?;
-    let user = option_env!("LOG_USER")?;
-    let pass = option_env!("LOG_PASS")?;
-    Some(OpenListClient::new(base, user, pass))
-}
-
-// sync all local log files to remote {APP_NAME}/logs/ — full overwrite per file name
-pub async fn sync_remote() -> Result<(), String> {
-    let Some(client) = logger_client() else {
-        if !SYNC_DISABLED_LOGGED.swap(true, Ordering::Relaxed) {
-            log("remote log sync disabled (built without LOG_* env)");
-        }
-        return Ok(());
-    };
+// sync all local log files to remote {REMOTE_DIR}/ — full overwrite per file name.
+// target account comes from user settings (openlist-uploader style), not compiled in.
+pub async fn sync_remote(base_url: &str, user: &str, pass: &str) -> Result<(), String> {
+    let client = OpenListClient::new(base_url, user, pass);
     let Some(l) = LOG.get() else {
         return Err("log not initialized".into());
     };
@@ -128,7 +95,7 @@ pub async fn sync_remote() -> Result<(), String> {
     }
     client.login().await?;
     client
-        .mkdirp(&format!("{APP_NAME}/logs"))
+        .mkdirp(REMOTE_DIR)
         .await
         .map_err(|e| format!("mkdir: {e}"))?;
     for (path, name) in files {
