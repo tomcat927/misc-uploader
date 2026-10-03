@@ -77,8 +77,8 @@ function nodeEl(name, path, depth) {
       expanded = true;
       row.querySelector(".dir-toggle").textContent = "▾";
       try {
-        const dirs = await invoke("list_dir", { path });
-        for (const d of dirs) children.appendChild(nodeEl(d, path ? path + "/" + d : d, depth + 1));
+        const entries = await invoke("list_dir", { path });
+        for (const d of entries.filter(e => e.is_dir)) children.appendChild(nodeEl(d.name, path ? path + "/" + d.name : d.name, depth + 1));
       } catch (e) { console.warn(e); }
     } else {
       children.style.display = children.style.display === "none" ? "" : "none";
