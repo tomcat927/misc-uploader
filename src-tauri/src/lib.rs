@@ -477,7 +477,7 @@ pub fn run() {
                 .app_config_dir()
                 .unwrap_or_else(|_| PathBuf::from("."));
             let _ = std::fs::create_dir_all(&dir);
-            log::init(dir.join("logs"));
+            log::init(dir.join("logs"), &app.package_info().version.to_string());
             let cfg_path = dir.join("config.json");
             let cfg: Config = std::fs::read(&cfg_path)
                 .ok()

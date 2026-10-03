@@ -115,7 +115,7 @@ jobs:
           $baseUrl = "https://github.com/$repo/releases/download/latest"
           $json = @{
             version = $version
-            notes = "自动构建版本 $version(北京时间)"
+            notes = "构建 $version(北京时间)"
             pub_date = $pubDate
             platforms = @{
               "windows-x86_64" = @{ signature = $signature; url = "https://gh-proxy.org/$baseUrl/$exeName" }

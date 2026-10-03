@@ -32,6 +32,8 @@
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJFRjc0Qjk5QUE2QTAwNEEKUldSS0FHcXFtVXYzdnRFVFp6WGdKOUluNzhIZmdIMmQ0VThZODJvUFBSVUJ5QXJOZkRZUUFOLzQK",
       "endpoints": [
         "https://gh-proxy.org/https://github.com/tomcat927/misc-uploader/releases/latest/download/latest.json",
+        "https://ghfast.top/https://github.com/tomcat927/misc-uploader/releases/latest/download/latest.json",
+        "https://ghproxy.net/https://github.com/tomcat927/misc-uploader/releases/latest/download/latest.json",
         "https://github.com/tomcat927/misc-uploader/releases/latest/download/latest.json"
       ]
     }

@@ -12,6 +12,7 @@ static SYNC_DISABLED_LOGGED: AtomicBool = AtomicBool::new(false);
 
 pub struct AppLog {
     dir: PathBuf,
+    version: String,
 }
 
 const APP_NAME: &str = "misc-uploader";
@@ -58,14 +59,14 @@ fn bj_date_compact() -> String {
     format!("{y:04}{mo:02}{d:02}")
 }
 
-pub fn init(dir: PathBuf) {
+pub fn init(dir: PathBuf, version: &str) {
     let _ = std::fs::create_dir_all(&dir);
-    let _ = LOG.set(AppLog { dir });
-    log("app log initialized");
+    let _ = LOG.set(AppLog { dir: dir, version: version.to_string() });
+    log(&format!("app v{} started", version));
 }
 
 pub fn log(msg: &str) {
-    let line = format!("[{}] {}", bj_stamp(), msg);
+    let line = format!("[{} v{}] {}", bj_stamp(), LOG.get().map(|l| l.version.as_str()).unwrap_or("?"), msg);
     if let Some(l) = LOG.get() {
         let path = l.dir.join(format!("applog-{}.log", bj_date_compact()));
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
