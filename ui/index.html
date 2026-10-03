@@ -18,7 +18,13 @@
   <!-- 主视图:目录树 + 拖拽 + 队列 -->
   <div id="view-main" class="view">
     <aside id="tree-pane" class="card">
-      <div class="pane-title">目标目录 <span class="dim">(点击选择)</span></div>
+      <div class="pane-title">目标目录 <span class="dim">(点击选择)</span>
+        <span class="spacer"></span>
+        <button id="btn-newdir" class="btn ghost" title="在选中的目录下新建文件夹">＋ 新建</button>
+      </div>
+      <div id="newdir-row" class="hidden">
+        <input id="newdir-name" placeholder="文件夹名称,Enter 确认 / Esc 取消" />
+      </div>
       <div id="tree"></div>
     </aside>
 

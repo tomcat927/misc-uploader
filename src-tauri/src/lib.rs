@@ -264,6 +264,22 @@ async fn list_dir(state: State<'_, AppState>, path: String) -> Result<Vec<openli
 }
 
 #[tauri::command]
+async fn new_dir(state: State<'_, AppState>, parent: String, name: String) -> Result<(), String> {
+    let name = name.trim().trim_matches('/').to_string();
+    if name.is_empty() {
+        return Err("文件夹名称必填".into());
+    }
+    if name.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..") {
+        return Err("文件夹名称含非法字符".into());
+    }
+    let client = state.client.lock().unwrap().as_ref().ok_or("not connected")?.clone();
+    let path = if parent.is_empty() { name.clone() } else { format!("{parent}/{name}") };
+    client.mkdirp(&path).await?;
+    log::log(&format!("new dir created: {path}"));
+    Ok(())
+}
+
+#[tauri::command]
 fn set_target(state: State<AppState>, mode: String, target: String) {
     *state.mode.lock().unwrap() = mode;
     *state.target.lock().unwrap() = target;
@@ -797,6 +813,7 @@ pub fn run() {
             save_settings,
             connect,
             list_dir,
+            new_dir,
             set_target,
             get_queue,
             retry_failed,

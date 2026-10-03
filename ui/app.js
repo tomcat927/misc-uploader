@@ -131,6 +131,34 @@ window.addEventListener("dragover", e => { e.preventDefault(); if (hasFiles(e)) 
 window.addEventListener("dragleave", e => { if (e.target === document.body) dz.classList.remove("drag"); });
 window.addEventListener("drop", e => { e.preventDefault(); dz.classList.remove("drag"); });
 
+// ---------- 新建文件夹(在选中的目标目录下) ----------
+$("btn-newdir").addEventListener("click", () => {
+  const row = $("newdir-row");
+  row.classList.toggle("hidden");
+  if (!row.classList.contains("hidden")) {
+    $("newdir-name").placeholder = "文件夹名称,Enter 确认 / Esc 取消";
+    $("newdir-name").focus();
+  }
+});
+$("newdir-name").addEventListener("keydown", async e => {
+  if (e.key === "Escape") {
+    $("newdir-row").classList.add("hidden");
+    return;
+  }
+  if (e.key !== "Enter") return;
+  const name = $("newdir-name").value.trim();
+  if (!name) return;
+  try {
+    await invoke("new_dir", { parent: selectedTarget, name });
+    $("newdir-row").classList.add("hidden");
+    $("newdir-name").value = "";
+    await renderTree();
+  } catch (err) {
+    $("newdir-name").value = "";
+    $("newdir-name").placeholder = "失败: " + err;
+  }
+});
+
 // ---------- mode radio ----------
 document.querySelectorAll('input[name="mode"]').forEach(r => {
   r.addEventListener("change", () => {
