@@ -17,6 +17,8 @@ use tauri::{DragDropEvent, Emitter, Manager, State, WindowEvent};
 
 // 队列进度节流:所有工人共享,最多每 400ms 发一次 queue-updated(避免大文件分片回调刷爆前端渲染)
 static LAST_PROGRESS_EMIT_MS: AtomicU64 = AtomicU64::new(0);
+// 下载进度节流:同理(所有并发下载共享)
+static LAST_DL_EMIT_MS: AtomicU64 = AtomicU64::new(0);
 
 pub struct AppState {
     pub client: Mutex<Option<Arc<OpenListClient>>>,
@@ -515,6 +517,121 @@ async fn upload_logs_now(state: State<'_, AppState>) -> Result<serde_json::Value
     }))
 }
 
+// ---- 云端文件浏览(2026-10-04 拍板形态 A-min:浏览 + 下载 + 浏览器打开;删除/重命名等管理操作另拍板)----
+
+#[derive(Serialize, Clone)]
+struct DownloadStart {
+    id: String,
+    name: String,
+    save_path: String,
+}
+
+// 下载目录同名去重:name.png → name (1).png → name (2).png …
+fn unique_download_path(dir: &std::path::Path, name: &str) -> Result<PathBuf, String> {
+    let name = name.replace(['\\', '/'], "_");
+    let (stem, ext) = match name.rfind('.') {
+        Some(idx) if idx > 0 => (&name[..idx], &name[idx..]),
+        _ => (name.as_str(), ""),
+    };
+    for i in 0..10000u32 {
+        let candidate = if i == 0 {
+            dir.join(format!("{stem}{ext}"))
+        } else {
+            dir.join(format!("{stem} ({i}){ext}"))
+        };
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("下载目录同名文件过多".into())
+}
+
+#[tauri::command]
+async fn download_file(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    remote_path: String,
+) -> Result<DownloadStart, String> {
+    let client = state
+        .client
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or("not connected")?
+        .clone();
+    if remote_path.split('/').any(|seg| seg == "..") || remote_path.starts_with('/') {
+        return Err("非法的远端路径".into());
+    }
+    let name = remote_path
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .ok_or("非法的远端路径")?
+        .to_string();
+    let dir = app
+        .path()
+        .download_dir()
+        .map_err(|e| format!("定位系统下载目录失败: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建下载目录失败: {e}"))?;
+    let save_path = unique_download_path(&dir, &name)?;
+    let id = format!("d{}", queue::now_ms());
+    let app2 = app.clone();
+    let id2 = id.clone();
+    let save_str = save_path.display().to_string();
+    tauri::async_runtime::spawn(async move {
+        let progress: Arc<dyn Fn(u64, u64) + Send + Sync> = {
+            let app = app2.clone();
+            let id = id2.clone();
+            Arc::new(move |downloaded: u64, total: u64| {
+                let now = queue::now_ms();
+                let last = LAST_DL_EMIT_MS.load(Ordering::Relaxed);
+                if now.saturating_sub(last) >= 400
+                    && LAST_DL_EMIT_MS
+                        .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                        .is_ok()
+                {
+                    let _ = app.emit(
+                        "download-progress",
+                        serde_json::json!({"id": id, "state": "running", "downloaded": downloaded, "total": total}),
+                    );
+                }
+            })
+        };
+        log::log(&format!("download start: {remote_path} -> {save_str}"));
+        let result = client.download_to(&remote_path, &save_path, progress).await;
+        match result {
+            Ok(n) => {
+                let _ = app2.emit(
+                    "download-progress",
+                    serde_json::json!({"id": id2, "state": "done", "downloaded": n, "total": n, "savedTo": save_str}),
+                );
+                log::log(&format!("download done: {remote_path} ({n} bytes)"));
+            }
+            Err(e) => {
+                let _ = app2.emit(
+                    "download-progress",
+                    serde_json::json!({"id": id2, "state": "failed", "error": e}),
+                );
+                log::log(&format!("download failed: {remote_path}: {e}"));
+            }
+        }
+    });
+    Ok(DownloadStart { id, name, save_path: save_str })
+}
+
+// 浏览器打开 OpenList WebUI 对应目录/文件(路由 = 路径本身,alist 系约定)
+#[tauri::command]
+fn open_browser(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("仅允许打开 http(s) 链接".into());
+    }
+    std::process::Command::new("explorer")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| format!("打开浏览器失败: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn open_log_dir(state: State<AppState>) {
     if let Some(p) = state.config_path.lock().unwrap().clone() {
@@ -967,6 +1084,8 @@ pub fn run() {
             set_upload_prefs,
             get_general_prefs,
             set_general_prefs,
+            download_file,
+            open_browser,
             open_log_dir,
             check_update,
             install_update

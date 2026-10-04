@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
+use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
 // REST 调用失败的两类:会话失效(401,可重登一次重试)与其它(终局失败)
@@ -41,6 +42,22 @@ struct ListEntry {
     name: String,
     is_dir: bool,
     size: u64,
+}
+
+// fs/get 的 data 子集(只要下载相关的三个字段)
+#[derive(Deserialize)]
+struct RawData {
+    name: Option<String>,
+    size: Option<u64>,
+    #[serde(default)]
+    raw_url: Option<String>,
+}
+
+/// 下载所需信息:raw_url(可能带签名、可能指向外部存储主机)、文件名、大小
+pub struct RawInfo {
+    pub raw_url: String,
+    pub name: String,
+    pub size: u64,
 }
 
 pub struct OpenListClient {
@@ -341,6 +358,101 @@ impl OpenListClient {
             .await
             .map_err(|e| ApiFail::Other(format!("mkdir request: {e}")))?;
         self.api(resp).await
+    }
+
+    // ---- 云端文件浏览:下载(2026-10-04 拍板形态 A-min:浏览 + 下载 + 浏览器打开;无删除/重命名管理)----
+
+    // fs/get:拿 raw_url(服务端负责签名,资源可能直连存储驱动)。相对 raw_url 拼回本站。
+    async fn raw_info(&self, path: &str) -> Result<RawInfo, String> {
+        let path_s = path.to_string();
+        let resp = self
+            .call_with_relogin(&format!("get {path}"), |token| self.get_req(&path_s, token))
+            .await?;
+        if resp.code != 200 {
+            let m = resp.message.unwrap_or_else(|| "get failed".into());
+            return Err(format!("get {path} -> {m}"));
+        }
+        let data = resp.data.ok_or_else(|| format!("get {path}: empty data"))?;
+        let raw_url = data.raw_url.filter(|s| !s.is_empty()).ok_or_else(|| format!("get {path}: no raw_url(目录或无权限?)"))?;
+        Ok(RawInfo {
+            raw_url,
+            name: data.name.unwrap_or_else(|| {
+                path.rsplit('/').next().unwrap_or("file").to_string()
+            }),
+            size: data.size.unwrap_or(0),
+        })
+    }
+
+    async fn get_req(&self, path: &str, token: String) -> Result<ApiResp<serde_json::Value>, ApiFail> {
+        let url = format!("{}/api/fs/get", self.base_url);
+        let r = self
+            .http
+            .post(&url)
+            .header("Authorization", &token)
+            .json(&json!({"path": path}))
+            .send()
+            .await
+            .map_err(|e| ApiFail::Other(format!("get request: {e}")))?;
+        self.api(r).await
+    }
+
+    // 下载到本机:GET raw_url 流式写盘(.part → 改名)。
+    // 安全:raw_url 可能指向外部存储主机,因此该请求【不带】Authorization/token,凭据绝不外带。
+    pub async fn download_to(
+        &self,
+        remote_path: &str,
+        save_path: &std::path::Path,
+        on_progress: Arc<dyn Fn(u64, u64) + Send + Sync>,
+    ) -> Result<u64, String> {
+        let info = self.raw_info(remote_path).await?;
+        let url = if info.raw_url.starts_with("http://") || info.raw_url.starts_with("https://") {
+            info.raw_url.clone()
+        } else {
+            format!("{}/{}", self.base_url, info.raw_url.trim_start_matches('/'))
+        };
+        log::log(&format!("download {remote_path}: GET {url}"));
+        let mut resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("download request: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("download {remote_path} -> HTTP {}", resp.status()));
+        }
+        let total = if info.size > 0 {
+            info.size
+        } else {
+            resp.content_length().unwrap_or(0)
+        };
+        let tmp = save_path.with_file_name(format!(
+            "{}.part",
+            save_path.file_name().and_then(|s| s.to_str()).unwrap_or("download")
+        ));
+        let mut file = tokio::fs::File::create(&tmp)
+            .await
+            .map_err(|e| format!("create {}: {e}", tmp.display()))?;
+        let mut downloaded: u64 = 0;
+        loop {
+            match resp.chunk().await {
+                Ok(Some(chunk)) => {
+                    file.write_all(&chunk)
+                        .await
+                        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+                    downloaded += chunk.len() as u64;
+                    on_progress(downloaded, total);
+                }
+                Ok(None) => break,
+                Err(e) => return Err(format!("download {remote_path}: {e}")),
+            }
+        }
+        file.flush().await.map_err(|e| format!("flush: {e}"))?;
+        drop(file);
+        tokio::fs::rename(&tmp, save_path)
+            .await
+            .map_err(|e| format!("rename {}: {e}", tmp.display()))?;
+        log::log(&format!("download done: {remote_path} -> {} ({downloaded} bytes)", save_path.display()));
+        Ok(downloaded)
     }
 
     // fs/list 确认目录是否已存在(mkdir 错误消息不可靠时的兜底)

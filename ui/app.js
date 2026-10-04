@@ -80,12 +80,17 @@ async function refreshStatus() {
 }
 
 // ---------- directory tree ----------
-function fileEl(f, depth) {
+function fileEl(f, depth, remotePath) {
   const row = document.createElement("div");
   row.className = "dir-file";
   row.style.paddingLeft = 6 + depth * 2 + "px";
   row.title = `${f.name} · ${fmtSize(f.size)}`;
   row.innerHTML = `<span class="dir-toggle"></span>${escapeHtml(f.name)} <span class="dim">(${fmtSize(f.size)})</span>`;
+  row.addEventListener("click", () => {
+    document.querySelectorAll(".dir-file.selected-file").forEach(n => n.classList.remove("selected-file"));
+    row.classList.add("selected-file");
+    showFileActions(remotePath, f.name);
+  });
   return row;
 }
 
@@ -112,7 +117,7 @@ function nodeEl(name, path, depth) {
         kidDirs.push({ name: d.name, el });
         children.appendChild(el);
       }
-      for (const f of entries.filter(e => !e.is_dir)) children.appendChild(fileEl(f, depth + 1));
+      for (const f of entries.filter(e => !e.is_dir)) children.appendChild(fileEl(f, depth + 1, path ? path + "/" + f.name : f.name));
     } catch (e) { console.warn(e); }
   }
 
@@ -132,6 +137,7 @@ function nodeEl(name, path, depth) {
     document.querySelectorAll(".dir-node.selected").forEach(n => n.classList.remove("selected"));
     row.classList.add("selected");
     selectedTarget = path;
+    hideFileActions(); // 切到目录节点:取消文件选中
     $("target-display").textContent = "/misc" + (path ? "/" + path : "");
     await invoke("set_target", { mode: "manual", target: path });
     document.querySelector('input[name="mode"][value="manual"]').checked = true;
@@ -175,6 +181,87 @@ async function renderTree(reselect) {
 }
 
 $("btn-refresh-tree").addEventListener("click", () => renderTree(selectedTarget));
+
+// ---------- 云端文件浏览:文件动作条 + 下载 ----------
+let selectedFilePath = "";
+
+function showFileActions(remotePath, name) {
+  selectedFilePath = remotePath;
+  $("fa-name").textContent = name;
+  $("fa-name").title = remotePath;
+  $("file-actions").classList.remove("hidden");
+}
+function hideFileActions() {
+  selectedFilePath = "";
+  $("file-actions").classList.add("hidden");
+}
+$("fa-close").addEventListener("click", () => {
+  document.querySelectorAll(".dir-file.selected-file").forEach(n => n.classList.remove("selected-file"));
+  hideFileActions();
+});
+
+$("fa-download").addEventListener("click", async () => {
+  if (!selectedFilePath) return;
+  try {
+    const r = await invoke("download_file", { remotePath: selectedFilePath });
+    addDownloadRow(r.id, r.name);
+  } catch (e) {
+    const row = addDownloadRow("err" + Date.now(), selectedFilePath.split("/").pop());
+    row.classList.add("failed");
+    row.querySelector(".dl-pct").textContent = "失败";
+    row.querySelector(".dl-bar").style.display = "none";
+    row.title = String(e);
+  }
+});
+
+// 浏览器打开 OpenList WebUI:路由 = 路径本身(alist 系),逐段 encodeURIComponent 保中文目录
+$("fa-open").addEventListener("click", async () => {
+  if (!selectedFilePath) return;
+  try {
+    const s = await invoke("load_settings");
+    const base = (s.base_url || "").replace(/\/+$/, "");
+    const url = base + "/" + selectedFilePath.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+    await invoke("open_browser", { url });
+  } catch (e) { console.warn(e); }
+});
+
+function addDownloadRow(id, name) {
+  const row = document.createElement("div");
+  row.className = "dl-row";
+  row.id = "dl-" + id;
+  row.innerHTML = `
+    <div class="dl-top">
+      <span class="dl-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+      <span class="dl-pct">…</span>
+      <button class="btn ghost dl-remove" title="移除">×</button>
+    </div>
+    <div class="dl-bar"><div></div></div>`;
+  row.querySelector(".dl-remove").addEventListener("click", () => row.remove());
+  $("downloads").appendChild(row);
+  return row;
+}
+
+listen("download-progress", e => {
+  const p = e.payload;
+  const row = document.getElementById("dl-" + p.id);
+  if (!row) return;
+  const pct = p.total ? Math.min(100, Math.round(100 * p.downloaded / p.total)) : 0;
+  const fill = row.querySelector(".dl-bar > div");
+  const pctEl = row.querySelector(".dl-pct");
+  if (p.state === "done") {
+    row.classList.add("done");
+    fill.style.width = "100%";
+    pctEl.textContent = "✓ 已保存";
+    row.title = p.savedTo || "";
+  } else if (p.state === "failed") {
+    row.classList.add("failed");
+    pctEl.textContent = "失败";
+    row.querySelector(".dl-bar").style.display = "none";
+  } else {
+    fill.style.width = pct + "%";
+    pctEl.textContent = (p.total ? pct + "%" : fmtSize(p.downloaded));
+  }
+});
 
 // ---------- drag & drop visual ----------
 const dz = $("dropzone");
