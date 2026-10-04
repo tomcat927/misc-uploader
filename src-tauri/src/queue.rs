@@ -24,6 +24,8 @@ pub struct QueueItem {
     pub sha: Option<String>,
     pub rel: Option<String>,
     pub state: String, // hashing | pending | processing | uploading | done | failed | skipped
+    /// 文件内进度:本次尝试已发送字节数(401 重传时自然从零重计)
+    pub uploaded: u64,
     pub tries: u32,
     pub error: Option<String>,
     /// 完成/跳过/失败的打点时间(ms),前端「已完成」区块排序用
@@ -112,6 +114,7 @@ impl Queue {
                 sha: None,
                 rel: None,
                 state: "hashing".into(),
+                uploaded: 0,
                 tries: 0,
                 error: None,
                 finished_at: None,

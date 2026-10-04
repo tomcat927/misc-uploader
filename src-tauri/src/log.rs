@@ -113,7 +113,7 @@ pub async fn sync_remote(base_url: &str, user: &str, pass: &str, remote_dir: &st
     for (path, name) in files {
         let remote = format!("{remote_dir}/{name}");
         client
-            .put_file(&remote, path.to_string_lossy().as_ref(), None)
+            .put_file(&remote, path.to_string_lossy().as_ref(), None, None) // 日志小文件,不需要进度回调
             .await
             .map_err(|e| format!("put {name}: {e}"))?;
         pushed += 1;

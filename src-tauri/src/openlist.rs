@@ -6,7 +6,7 @@ use reqwest::{Client, Response};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio_util::io::ReaderStream;
 
@@ -368,7 +368,14 @@ impl OpenListClient {
     // 头:File-Path(file_path_header 统一编码)/ Content-Length(已知大小)/ X-File-Sha256
     // (声明元数据,与去重同一次哈希;服务端记入 HashInfo,不做强校验)/ Overwrite 缺省 = 覆盖
     // (与原 WebDAV PUT 语义一致)。
-    pub async fn put_file(&self, rel: &str, file_path: &str, sha256: Option<&str>) -> Result<u64, String> {
+    // progress:文件内字节级进度回调,每次尝试从零累计(401 重传自然归零重计);None = 不关心进度
+    pub async fn put_file(
+        &self,
+        rel: &str,
+        file_path: &str,
+        sha256: Option<&str>,
+        progress: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    ) -> Result<u64, String> {
         if self.token.read().unwrap().is_none() {
             self.login().await?;
         }
@@ -383,7 +390,7 @@ impl OpenListClient {
         let sha_s = sha256.map(|s| s.to_string());
         let resp = self
             .call_with_relogin(&format!("PUT {rel}"), |token| {
-                self.put_req(&rel_s, &fp_s, sha_s.as_deref(), token, total)
+                self.put_req(&rel_s, &fp_s, sha_s.as_deref(), token, total, progress.clone())
             })
             .await?;
         if resp.code != 200 {
@@ -402,11 +409,13 @@ impl OpenListClient {
         sha256: Option<&str>,
         token: String,
         total: u64,
+        progress: Option<Arc<dyn Fn(u64) + Send + Sync>>,
     ) -> Result<ApiResp<serde_json::Value>, ApiFail> {
         let file = tokio::fs::File::open(file_path)
             .await
             .map_err(|e| ApiFail::Other(format!("open {file_path}: {e}")))?;
-        let stream = ReaderStream::with_capacity(file, 256 * 1024);
+        let counted = CountingReader { inner: file, sent: 0, progress };
+        let stream = ReaderStream::with_capacity(counted, 256 * 1024);
         let url = format!("{}/api/fs/put", self.base_url);
         let mut req = self
             .http
@@ -424,5 +433,38 @@ impl OpenListClient {
             .await
             .map_err(|e| ApiFail::Other(format!("PUT {rel}: {e}")))?;
         self.api(resp).await
+    }
+}
+
+// 文件内进度:包在 ReaderStream 之前的 AsyncRead 计数层(读出多少字节就上报累计值;
+// 用 tokio 自带 AsyncRead/ReadBuf 实现,零新增依赖)。仅统计已读入请求流的字节,
+// 不等服务器 ACK——与 curl 等常见上传进度语义一致。
+struct CountingReader<R> {
+    inner: R,
+    sent: u64,
+    progress: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for CountingReader<R> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        let before = buf.filled().len();
+        match std::pin::Pin::new(&mut this.inner).poll_read(cx, buf) {
+            std::task::Poll::Ready(Ok(())) => {
+                let n = buf.filled().len() - before;
+                if n > 0 {
+                    this.sent += n as u64;
+                    if let Some(p) = &this.progress {
+                        p(this.sent);
+                    }
+                }
+                std::task::Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
     }
 }

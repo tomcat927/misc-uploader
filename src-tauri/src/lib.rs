@@ -1,5 +1,6 @@
 // lib.rs — Tauri app: commands, drag&drop intake, upload workers,
 // hot-update (tauri-plugin-updater), remote log sync.
+mod dpapi;
 mod log;
 mod openlist;
 mod queue;
@@ -9,9 +10,13 @@ use queue::{Queue, QueueItem};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 use tauri::{DragDropEvent, Emitter, Manager, State, WindowEvent};
+
+// 队列进度节流:所有工人共享,最多每 400ms 发一次 queue-updated(避免大文件分片回调刷爆前端渲染)
+static LAST_PROGRESS_EMIT_MS: AtomicU64 = AtomicU64::new(0);
 
 pub struct AppState {
     pub client: Mutex<Option<Arc<OpenListClient>>>,
@@ -176,10 +181,7 @@ fn save_settings(
     if cfg.base_url.is_empty() || cfg.username.is_empty() {
         return Err("服务器地址和用户名必填(密码留空 = 沿用已保存)".into());
     }
-    if let Some(p) = state.config_path.lock().unwrap().clone() {
-        let _ = std::fs::create_dir_all(p.parent().unwrap());
-        let _ = std::fs::write(&p, serde_json::to_vec_pretty(&cfg).unwrap_or_default());
-    }
+    persist_config(&state, &cfg);
     *state.config.lock().unwrap() = cfg;
     Ok(())
 }
@@ -367,26 +369,32 @@ fn get_log_sync(state: State<AppState>) -> LogSyncConfig {
 
 #[tauri::command]
 fn set_log_sync(state: State<AppState>, enabled: bool, base_url: String, username: String, password: String, remote_dir: String, sync_interval_minutes: u32) {
-    let mut cfg = state.config.lock().unwrap();
-    let cur = cfg.log_sync.clone();
-    cfg.log_sync = LogSyncConfig {
-        enabled,
-        base_url: base_url.trim_end_matches('/').to_string(),
-        username,
-        password: if password.is_empty() || password == "********" { cur.password } else { password },
-        remote_dir: remote_dir.trim().trim_matches('/').to_string(),
-        sync_interval_minutes: sync_interval_minutes.clamp(1, 1440),
+    let cfg_ls_base_url = {
+        let mut cfg = state.config.lock().unwrap();
+        let cur = cfg.log_sync.clone();
+        cfg.log_sync = LogSyncConfig {
+            enabled,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            username,
+            password: if password.is_empty() || password == "********" { cur.password } else { password },
+            remote_dir: remote_dir.trim().trim_matches('/').to_string(),
+            sync_interval_minutes: sync_interval_minutes.clamp(1, 1440),
+        };
+        persist_config(&state, &cfg); // 守卫借用期间落盘(加密在出口统一做,config_path 与 config 是不同锁)
+        cfg.log_sync.base_url.clone()
     };
-    if let Some(p) = state.config_path.lock().unwrap().clone() {
-        let _ = std::fs::write(&p, serde_json::to_vec_pretty(&*cfg).unwrap_or_default());
-    }
-    log::log(&format!("log sync config saved (enabled={enabled}, target {})", cfg.log_sync.base_url));
+    log::log(&format!("log sync config saved (enabled={enabled}, target {cfg_ls_base_url})"));
 }
 
+// 落盘唯一出口:内存里密码始终明文,写盘前对两个密码字段做 DPAPI 加密(见 dpapi.rs);
+// 加密罕见失败时回退明文,保证保存永不丢密码。所有写 config.json 的路径都必须走这里。
 fn persist_config(state: &State<AppState>, cfg: &Config) {
     if let Some(p) = state.config_path.lock().unwrap().clone() {
+        let mut out = cfg.clone();
+        out.password = dpapi::encrypt_or_plain(&cfg.password);
+        out.log_sync.password = dpapi::encrypt_or_plain(&cfg.log_sync.password);
         let _ = std::fs::create_dir_all(p.parent().unwrap());
-        let _ = std::fs::write(&p, serde_json::to_vec_pretty(cfg).unwrap_or_default());
+        let _ = std::fs::write(&p, serde_json::to_vec_pretty(&out).unwrap_or_default());
     }
 }
 
@@ -673,6 +681,7 @@ async fn process_item(
             });
         }
         g.state = "uploading".into();
+        g.uploaded = 0; // 每次尝试(含重试)从零重计
     }
     emit_queue(app);
 
@@ -680,6 +689,23 @@ async fn process_item(
     let (rel, file_path, sha) = {
         let g = item.lock().unwrap();
         (g.rel.clone().unwrap(), g.file_path.clone(), g.sha.clone())
+    };
+    // 文件内进度回调:写入 uploaded 并全局节流 emit(守卫在语句内即释放,emit 时不持任何锁)
+    let progress: Arc<dyn Fn(u64) + Send + Sync> = {
+        let item = item.clone();
+        let app = app.clone();
+        Arc::new(move |sent: u64| {
+            item.lock().unwrap().uploaded = sent;
+            let now = queue::now_ms();
+            let last = LAST_PROGRESS_EMIT_MS.load(Ordering::Relaxed);
+            if now.saturating_sub(last) >= 400
+                && LAST_PROGRESS_EMIT_MS
+                    .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            {
+                emit_queue(&app);
+            }
+        })
     };
     log::log(&format!("upload start: {rel}"));
     let dir = std::path::Path::new(&rel)
@@ -693,13 +719,14 @@ async fn process_item(
             return;
         }
     }
-    let result = client.put_file(&rel, &file_path, sha.as_deref()).await;
+    let result = client.put_file(&rel, &file_path, sha.as_deref(), Some(progress)).await;
     let uploaded_ok = result.is_ok();
     match result {
         Ok(_) => {
             {
                 let mut g = item.lock().unwrap();
                 g.state = "done".into();
+                g.uploaded = g.size;
                 g.finished_at = Some(queue::now_ms());
                 let sha = g.sha.clone().unwrap_or_default();
                 q.history_put(sha, queue::HistoryEntry { rel: rel.clone(), time: queue::now_ms() });
@@ -807,7 +834,7 @@ pub fn run() {
             let _ = std::fs::create_dir_all(&dir);
             log::init(dir.join("logs"), &app.package_info().version.to_string());
             let cfg_path = dir.join("config.json");
-            let cfg: Config = std::fs::read(&cfg_path)
+            let mut cfg: Config = std::fs::read(&cfg_path)
                 .ok()
                 .and_then(|b| serde_json::from_slice(&b).ok())
                 .unwrap_or(Config {
@@ -818,6 +845,16 @@ pub fn run() {
                     upload: Default::default(),
                     general: Default::default(),
                 });
+            // 密码字段解密(旧明文原样兼容;解密失败 = blob 不可恢复,如跨机器迁移 → 置空提示重输)
+            {
+                let main_was_enc = cfg.password.starts_with(dpapi::PREFIX);
+                cfg.password = dpapi::decrypt_or_passthrough(&cfg.password);
+                let ls_was_enc = cfg.log_sync.password.starts_with(dpapi::PREFIX);
+                cfg.log_sync.password = dpapi::decrypt_or_passthrough(&cfg.log_sync.password);
+                if (main_was_enc && cfg.password.is_empty()) || (ls_was_enc && cfg.log_sync.password.is_empty()) {
+                    log::log("config: DPAPI 密码解密失败(换机器/换用户档案?),请在设置页重新输入密码");
+                }
+            }
             app.manage(AppState {
                 client: Mutex::new(None),
                 queue: Mutex::new(None),

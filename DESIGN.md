@@ -25,10 +25,13 @@
 | 远程日志协议与路径 | **协议随主链路迁移为 REST**(2026-10-04;原「保持 WebDAV」拍板被私有仓 client-protocol-decision.md 取代);**存放路径是设置页字段** `remote_dir`(默认 `log/misc-uploader`,**相对 logger 账号可见根**,服务端拼 base_path——logger 账号实际 base_path=/本地磁盘,旧默认 `本地磁盘/misc-uploader/logs` 曾双写为 /本地磁盘/本地磁盘/...,2026-10-04 修正;归档方向 = 磁盘根统一 `log/` 按应用划分);**上传间隔** `sync_interval_minutes` 也是设置页字段(默认 5 分钟) |
 | 用户偏好(2026-10-03 批量) | 设置页**加宽加大字号**(1080px/14px 基准);密码框显示/隐藏切换;上传并发数(1-16,默认 3)与最大重试次数(0-10,默认 3)可设置,并发数下次「连接」生效;上传成功后 `list refresh=true` 刷新目标目录触发 OpenList 增量索引(尽力而为);开机自启(tauri-plugin-autostart,注册参数 `--autostart`)+ 静默启动(配置勾选或 `--autostart` 启动即隐藏窗口)+ 托盘(左键/菜单唤出,菜单含退出)+ 关闭最小化到托盘(`minimize_on_close` 默认开)均可配置;启动自动检查更新(可关) |
 | CI 服务器依赖 | **零**:CI 不登录任何真实服务器(2026-10-03 移除冒烟测试);应用的服务器/账号全部用户运行时配置,凭据不进 CI secrets |
+| 文件内进度与密码加密(2026-10-04 批) | **文件内字节级进度**:QueueItem 增 `uploaded` 字段;`put_file` 在 ReaderStream 前加 CountingReader(AsyncRead 计数层,零新依赖),按已读入请求流的字节上报(与 curl 等常见上传进度同语义,不等服务器 ACK);401 重传自然从零重计;回调写入 item 并**全局节流 400ms** emit(原子 CAS,多工人共享),防大文件分片回调刷爆前端全量重渲染。**本机配置密码 DPAPI 加密**(dpapi.rs,FFI crypt32 零依赖):落盘唯一出口 `persist_config` 对主账号 + 日志账号两个密码字段加密(`dpapi:v1:` + hex,blob 绑定用户档案 + 应用熵),内存中始终明文;读回兼容旧明文;**解密失败(换机器/换用户档案)= 密码不可恢复,置空并记日志提示重输**;非 Windows 编译目标回退明文 |
 
 ## 边界(V1 不做)
 
-剪贴板监控 / 全局热键 / 右键菜单 / 托盘 / 下载预览 / 删除远端 / 加密直传 vault(维持热层+cron 归档架构)/ 断点续传(整文件重试)/ 多服务器 / 自动更新 / 代码签名 / 文件内字节级进度(文件粒度状态,V2 再说)。
+剪贴板监控 / 全局热键 / 右键菜单 / 下载预览 / 删除远端 / 加密直传 vault(维持热层+cron 归档架构)/ 断点续传(整文件重试)/ 多服务器 / 代码签名(Authenticode)。
+
+> 已从本清单毕业:托盘(2026-10-03)、自动更新/热更新(2026-10-03)、文件内字节级进度(2026-10-04)。
 
 ## 架构
 
@@ -128,4 +131,4 @@ push(app/** 触发):
 
 ## 密码体系(重复以示重要)
 
-软件配置 = misc-uploader 账号(明文存本机 app config,V2 DPAPI);与 Crypt password/salt 无关;密码不进 git(Secrets 与服务器 root-only 文件)。
+软件配置 = misc-uploader 账号(密码字段落盘已 DPAPI 加密,2026-10-04;其余字段明文;跨机器迁移 config.json 需重新输入密码);与 Crypt password/salt 无关;密码不进 git(Secrets 与服务器 root-only 文件)。
