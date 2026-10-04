@@ -578,6 +578,7 @@ async fn download_file(
     let app2 = app.clone();
     let id2 = id.clone();
     let save_str = save_path.display().to_string();
+    let save_str_in_task = save_str.clone();
     tauri::async_runtime::spawn(async move {
         let progress: Arc<dyn Fn(u64, u64) + Send + Sync> = {
             let app = app2.clone();
@@ -597,13 +598,13 @@ async fn download_file(
                 }
             })
         };
-        log::log(&format!("download start: {remote_path} -> {save_str}"));
+        log::log(&format!("download start: {remote_path} -> {save_str_in_task}"));
         let result = client.download_to(&remote_path, &save_path, progress).await;
         match result {
             Ok(n) => {
                 let _ = app2.emit(
                     "download-progress",
-                    serde_json::json!({"id": id2, "state": "done", "downloaded": n, "total": n, "savedTo": save_str}),
+                    serde_json::json!({"id": id2, "state": "done", "downloaded": n, "total": n, "savedTo": save_str_in_task}),
                 );
                 log::log(&format!("download done: {remote_path} ({n} bytes)"));
             }

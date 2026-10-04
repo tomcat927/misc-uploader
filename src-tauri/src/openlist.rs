@@ -383,7 +383,7 @@ impl OpenListClient {
         })
     }
 
-    async fn get_req(&self, path: &str, token: String) -> Result<ApiResp<serde_json::Value>, ApiFail> {
+    async fn get_req(&self, path: &str, token: String) -> Result<ApiResp<RawData>, ApiFail> {
         let url = format!("{}/api/fs/get", self.base_url);
         let r = self
             .http
